@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVELOGEXPORTLOGIC_H
 #define DIVELOGEXPORTLOGIC_H
 
@@ -13,7 +14,6 @@ struct htmlExportSetting {
 	QString themeFile;
 };
 
-void file_copy_and_overwrite(const QString &fileName, const QString &newName);
 void exportHtmlInitLogic(const QString &filename, struct htmlExportSetting &hes);
 
 #endif // DIVELOGEXPORTLOGIC_H

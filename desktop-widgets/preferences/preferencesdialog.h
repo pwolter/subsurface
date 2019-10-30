@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PREFERENCES_WIDGET_H
 #define PREFERENCES_WIDGET_H
 
@@ -14,7 +15,7 @@ class PreferencesDialog : public QDialog {
 	Q_OBJECT
 public:
 	static PreferencesDialog* instance();
-	virtual ~PreferencesDialog();
+	~PreferencesDialog();
 	void addPreferencePage(AbstractPreferencesWidget *page);
 	void refreshPages();
 	void emitSettingsChanged();

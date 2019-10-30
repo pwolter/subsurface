@@ -1,247 +1,261 @@
+// SPDX-License-Identifier: GPL-2.0
 /* divesite.c */
 #include "divesite.h"
 #include "dive.h"
+#include "subsurface-string.h"
 #include "divelist.h"
+#include "membuffer.h"
+#include "table.h"
+#include "sha1.h"
 
 #include <math.h>
 
 struct dive_site_table dive_site_table;
 
-/* there could be multiple sites of the same name - return the first one */
-uint32_t get_dive_site_uuid_by_name(const char *name, struct dive_site **dsp)
+int get_divesite_idx(const struct dive_site *ds, struct dive_site_table *ds_table)
+{
+	int i;
+	const struct dive_site *d;
+	// tempting as it may be, don't die when called with ds=NULL
+	if (ds)
+		for_each_dive_site(i, d, ds_table) {
+			if (d == ds)
+				return i;
+		}
+	return -1;
+}
+
+// TODO: keep table sorted by UUID and do a binary search?
+struct dive_site *get_dive_site_by_uuid(uint32_t uuid, struct dive_site_table *ds_table)
 {
 	int i;
 	struct dive_site *ds;
-	for_each_dive_site (i, ds) {
-		if (same_string(ds->name, name)) {
-			if (dsp)
-				*dsp = ds;
-			return ds->uuid;
-		}
+	for_each_dive_site (i, ds, ds_table)
+		if (ds->uuid == uuid)
+			return get_dive_site(i, ds_table);
+	return NULL;
+}
+
+/* there could be multiple sites of the same name - return the first one */
+struct dive_site *get_dive_site_by_name(const char *name, struct dive_site_table *ds_table)
+{
+	int i;
+	struct dive_site *ds;
+	for_each_dive_site (i, ds, ds_table) {
+		if (same_string(ds->name, name))
+			return ds;
 	}
-	return 0;
+	return NULL;
 }
 
 /* there could be multiple sites at the same GPS fix - return the first one */
-uint32_t get_dive_site_uuid_by_gps(degrees_t latitude, degrees_t longitude, struct dive_site **dsp)
+struct dive_site *get_dive_site_by_gps(const location_t *loc, struct dive_site_table *ds_table)
 {
 	int i;
 	struct dive_site *ds;
-	for_each_dive_site (i, ds) {
-		if (ds->latitude.udeg == latitude.udeg && ds->longitude.udeg == longitude.udeg) {
-			if (dsp)
-				*dsp = ds;
-			return ds->uuid;
-		}
+	for_each_dive_site (i, ds, ds_table) {
+		if (same_location(loc, &ds->location))
+			return ds;
 	}
-	return 0;
+	return NULL;
 }
-
 
 /* to avoid a bug where we have two dive sites with different name and the same GPS coordinates
  * and first get the gps coordinates (reading a V2 file) and happen to get back "the other" name,
  * this function allows us to verify if a very specific name/GPS combination already exists */
-uint32_t get_dive_site_uuid_by_gps_and_name(char *name, degrees_t latitude, degrees_t longitude)
+struct dive_site *get_dive_site_by_gps_and_name(char *name, const location_t *loc, struct dive_site_table *ds_table)
 {
 	int i;
 	struct dive_site *ds;
-	for_each_dive_site (i, ds) {
-		if (ds->latitude.udeg == latitude.udeg && ds->longitude.udeg == longitude.udeg && same_string(ds->name, name))
-			return ds->uuid;
+	for_each_dive_site (i, ds, ds_table) {
+		if (same_location(loc, &ds->location) && same_string(ds->name, name))
+			return ds;
 	}
-	return 0;
+	return NULL;
 }
 
 // Calculate the distance in meters between two coordinates.
-unsigned int get_distance(degrees_t lat1, degrees_t lon1, degrees_t lat2, degrees_t lon2)
+unsigned int get_distance(const location_t *loc1, const location_t *loc2)
 {
-	double lat2_r = udeg_to_radians(lat2.udeg);
-	double lat_d_r = udeg_to_radians(lat2.udeg-lat1.udeg);
-	double lon_d_r = udeg_to_radians(lon2.udeg-lon1.udeg);
+	double lat1_r = udeg_to_radians(loc1->lat.udeg);
+	double lat2_r = udeg_to_radians(loc2->lat.udeg);
+	double lat_d_r = udeg_to_radians(loc2->lat.udeg - loc1->lat.udeg);
+	double lon_d_r = udeg_to_radians(loc2->lon.udeg - loc1->lon.udeg);
 
 	double a = sin(lat_d_r/2) * sin(lat_d_r/2) +
-		cos(lat2_r) * cos(lat2_r) * sin(lon_d_r/2) * sin(lon_d_r/2);
+		cos(lat1_r) * cos(lat2_r) * sin(lon_d_r/2) * sin(lon_d_r/2);
+	if (a < 0.0) a = 0.0;
+	if (a > 1.0) a = 1.0;
 	double c = 2 * atan2(sqrt(a), sqrt(1.0 - a));
 
-	// Earth radious in metres
-	return 6371000 * c;
+	// Earth radius in metres
+	return lrint(6371000 * c);
 }
 
 /* find the closest one, no more than distance meters away - if more than one at same distance, pick the first */
-uint32_t get_dive_site_uuid_by_gps_proximity(degrees_t latitude, degrees_t longitude, int distance, struct dive_site **dsp)
+struct dive_site *get_dive_site_by_gps_proximity(const location_t *loc, int distance, struct dive_site_table *ds_table)
 {
 	int i;
-	int uuid = 0;
-	struct dive_site *ds;
+	struct dive_site *ds, *res = NULL;
 	unsigned int cur_distance, min_distance = distance;
-	for_each_dive_site (i, ds) {
+	for_each_dive_site (i, ds, ds_table) {
 		if (dive_site_has_gps_location(ds) &&
-		    (cur_distance = get_distance(ds->latitude, ds->longitude, latitude, longitude)) < min_distance) {
+		    (cur_distance = get_distance(&ds->location, loc)) < min_distance) {
 			min_distance = cur_distance;
-			uuid = ds->uuid;
-			if (dsp)
-				*dsp = ds;
+			res = ds;
 		}
 	}
-	return uuid;
+	return res;
 }
 
-/* try to create a uniqe ID - fingers crossed */
-static uint32_t dive_site_getUniqId()
+int register_dive_site(struct dive_site *ds)
 {
-	uint32_t id = 0;
+	return add_dive_site_to_table(ds, &dive_site_table);
+}
 
-	while (id == 0 || get_dive_site_by_uuid(id)) {
-		id = rand() & 0xff;
-		id |= (rand() & 0xff) << 8;
-		id |= (rand() & 0xff) << 16;
-		id |= (rand() & 0xff) << 24;
+static int compare_sites(const struct dive_site *a, const struct dive_site *b)
+{
+	return a->uuid > b->uuid ? 1 : a->uuid == b->uuid ? 0 : -1;
+}
+
+static int site_less_than(const struct dive_site *a, const struct dive_site *b)
+{
+	return compare_sites(a, b) < 0;
+}
+
+static MAKE_GROW_TABLE(dive_site_table, struct dive_site *, dive_sites)
+static MAKE_GET_INSERTION_INDEX(dive_site_table, struct dive_site *, dive_sites, site_less_than)
+static MAKE_ADD_TO(dive_site_table, struct dive_site *, dive_sites)
+static MAKE_REMOVE_FROM(dive_site_table, dive_sites)
+static MAKE_GET_IDX(dive_site_table, struct dive_site *, dive_sites)
+MAKE_SORT(dive_site_table, struct dive_site *, dive_sites, compare_sites)
+static MAKE_REMOVE(dive_site_table, struct dive_site *, dive_site)
+MAKE_CLEAR_TABLE(dive_site_table, dive_sites, dive_site)
+MAKE_MOVE_TABLE(dive_site_table, dive_sites)
+
+int add_dive_site_to_table(struct dive_site *ds, struct dive_site_table *ds_table)
+{
+	/* If the site doesn't yet have an UUID, create a new one.
+	 * Make this deterministic for testing. */
+	if (!ds->uuid) {
+		SHA_CTX ctx;
+		uint32_t csum[5];
+
+		SHA1_Init(&ctx);
+		if (ds->name)
+			SHA1_Update(&ctx, ds->name, strlen(ds->name));
+		if (ds->description)
+			SHA1_Update(&ctx, ds->description, strlen(ds->description));
+		if (ds->notes)
+			SHA1_Update(&ctx, ds->notes, strlen(ds->notes));
+		SHA1_Final((unsigned char *)csum, &ctx);
+		ds->uuid = csum[0];
 	}
 
-	return id;
+	/* Take care to never have the same uuid twice. This could happen on
+	 * reimport of a log where the dive sites have diverged */
+	while (ds->uuid == 0 || get_dive_site_by_uuid(ds->uuid, ds_table) != NULL)
+		++ds->uuid;
+
+	int idx = dive_site_table_get_insertion_index(ds_table, ds);
+	add_to_dive_site_table(ds_table, idx, ds);
+	return idx;
 }
 
-/* we never allow a second dive site with the same uuid */
-struct dive_site *alloc_or_get_dive_site(uint32_t uuid)
+struct dive_site *alloc_dive_site()
 {
 	struct dive_site *ds;
-	if (uuid) {
-		if ((ds = get_dive_site_by_uuid(uuid)) != NULL) {
-			fprintf(stderr, "PROBLEM: refusing to create dive site with the same uuid %08x\n", uuid);
-			return ds;
-		}
-	}
-	int nr = dive_site_table.nr;
-	int allocated = dive_site_table.allocated;
-	struct dive_site **sites = dive_site_table.dive_sites;
-
-	if (nr >= allocated) {
-		allocated = (nr + 32) * 3 / 2;
-		sites = realloc(sites, allocated * sizeof(struct dive_site *));
-		if (!sites)
-			exit(1);
-		dive_site_table.dive_sites = sites;
-		dive_site_table.allocated = allocated;
-	}
 	ds = calloc(1, sizeof(*ds));
 	if (!ds)
 		exit(1);
-	sites[nr] = ds;
-	dive_site_table.nr = nr + 1;
-	// we should always be called with a valid uuid except in the special
-	// case where we want to copy a dive site into the memory we allocated
-	// here - then we need to pass in 0 and create a temporary uuid here
-	// (just so things are always consistent)
-	if (uuid)
-		ds->uuid = uuid;
-	else
-		ds->uuid = dive_site_getUniqId();
 	return ds;
 }
 
-int nr_of_dives_at_dive_site(uint32_t uuid, bool select_only)
+/* when parsing, dive sites are identified by uuid */
+struct dive_site *alloc_or_get_dive_site(uint32_t uuid, struct dive_site_table *ds_table)
 {
-	int j;
-	int nr = 0;
-	struct dive *d;
-	for_each_dive(j, d) {
-		if (d->dive_site_uuid == uuid && (!select_only || d->selected)) {
-			nr++;
-		}
-	}
-	return nr;
+	struct dive_site *ds;
+
+	if (uuid && (ds = get_dive_site_by_uuid(uuid, ds_table)) != NULL)
+		return ds;
+
+	ds = alloc_dive_site();
+	ds->uuid = uuid;
+
+	add_dive_site_to_table(ds, ds_table);
+
+	return ds;
 }
 
-bool is_dive_site_used(uint32_t uuid, bool select_only)
+int nr_of_dives_at_dive_site(struct dive_site *ds)
 {
-	int j;
-	bool found = false;
-	struct dive *d;
-	for_each_dive(j, d) {
-		if (d->dive_site_uuid == uuid && (!select_only || d->selected)) {
-			found = true;
-			break;
-		}
-	}
-	return found;
+	return ds->dives.nr;
 }
 
-void delete_dive_site(uint32_t id)
+bool is_dive_site_selected(struct dive_site *ds)
 {
-	int nr = dive_site_table.nr;
-	for (int i = 0; i < nr; i++) {
-		struct dive_site *ds = get_dive_site(i);
-		if (ds->uuid == id) {
-			free(ds->name);
-			free(ds->notes);
-			free(ds);
-			if (nr - 1 > i)
-				memmove(&dive_site_table.dive_sites[i],
-					&dive_site_table.dive_sites[i+1],
-					(nr - 1 - i) * sizeof(dive_site_table.dive_sites[0]));
-			dive_site_table.nr = nr - 1;
-			break;
-		}
+	int i;
+
+	for (i = 0; i < ds->dives.nr; i++) {
+		if (ds->dives.dives[i]->selected)
+			return true;
+	}
+	return false;
+}
+
+void free_dive_site(struct dive_site *ds)
+{
+	if (ds) {
+		free(ds->name);
+		free(ds->notes);
+		free(ds->description);
+		free(ds->dives.dives);
+		free_taxonomy(&ds->taxonomy);
+		free(ds);
 	}
 }
 
-uint32_t create_divesite_uuid(const char *name, timestamp_t divetime)
+int unregister_dive_site(struct dive_site *ds)
 {
-	if (name == NULL)
-		name ="";
-	unsigned char hash[20];
-	SHA_CTX ctx;
-	SHA1_Init(&ctx);
-	SHA1_Update(&ctx, &divetime, sizeof(timestamp_t));
-	SHA1_Update(&ctx, name, strlen(name));
-	SHA1_Final(hash, &ctx);
-	// now return the first 32 of the 160 bit hash
-	return *(uint32_t *)hash;
+	return remove_dive_site(ds, &dive_site_table);
+}
+
+void delete_dive_site(struct dive_site *ds, struct dive_site_table *ds_table)
+{
+	if (!ds)
+		return;
+	remove_dive_site(ds, ds_table);
+	free_dive_site(ds);
 }
 
 /* allocate a new site and add it to the table */
-uint32_t create_dive_site(const char *name, timestamp_t divetime)
+struct dive_site *create_dive_site(const char *name, struct dive_site_table *ds_table)
 {
-	uint32_t uuid = create_divesite_uuid(name, divetime);
-	struct dive_site *ds = alloc_or_get_dive_site(uuid);
+	struct dive_site *ds = alloc_dive_site();
 	ds->name = copy_string(name);
-
-	return uuid;
-}
-
-/* same as before, but with current time if no current_dive is present */
-uint32_t create_dive_site_from_current_dive(const char *name)
-{
-	if (current_dive != NULL) {
-		return create_dive_site(name, current_dive->when);
-	} else {
-		timestamp_t when;
-		time_t now = time(0);
-		when = utc_mktime(localtime(&now));
-		return create_dive_site(name, when);
-	}
+	add_dive_site_to_table(ds, ds_table);
+	return ds;
 }
 
 /* same as before, but with GPS data */
-uint32_t create_dive_site_with_gps(const char *name, degrees_t latitude, degrees_t longitude, timestamp_t divetime)
+struct dive_site *create_dive_site_with_gps(const char *name, const location_t *loc, struct dive_site_table *ds_table)
 {
-	uint32_t uuid = create_divesite_uuid(name, divetime);
-	struct dive_site *ds = alloc_or_get_dive_site(uuid);
+	struct dive_site *ds = alloc_dive_site();
 	ds->name = copy_string(name);
-	ds->latitude = latitude;
-	ds->longitude = longitude;
+	ds->location = *loc;
+	add_dive_site_to_table(ds, ds_table);
 
-	return ds->uuid;
+	return ds;
 }
 
-/* a uuid is always present - but if all the other fields are empty, the dive site is pointless */
+/* if all fields are empty, the dive site is pointless */
 bool dive_site_is_empty(struct dive_site *ds)
 {
-	return same_string(ds->name, "") &&
-	       same_string(ds->description, "") &&
-	       same_string(ds->notes, "") &&
-	       ds->latitude.udeg == 0 &&
-	       ds->longitude.udeg == 0;
+	return !ds ||
+	       (empty_string(ds->name) &&
+	       empty_string(ds->description) &&
+	       empty_string(ds->notes) &&
+	       !has_location(&ds->location));
 }
 
 void copy_dive_site(struct dive_site *orig, struct dive_site *copy)
@@ -250,88 +264,119 @@ void copy_dive_site(struct dive_site *orig, struct dive_site *copy)
 	free(copy->notes);
 	free(copy->description);
 
-	copy->latitude = orig->latitude;
-	copy->longitude = orig->longitude;
+	copy->location = orig->location;
 	copy->name = copy_string(orig->name);
 	copy->notes = copy_string(orig->notes);
 	copy->description = copy_string(orig->description);
-	copy->uuid = orig->uuid;
-	if (orig->taxonomy.category == NULL) {
-		free_taxonomy(&copy->taxonomy);
-	} else {
-		if (copy->taxonomy.category == NULL)
-			copy->taxonomy.category = alloc_taxonomy();
-		for (int i = 0; i < TC_NR_CATEGORIES; i++) {
-			if (i < copy->taxonomy.nr)
-				free((void *)copy->taxonomy.category[i].value);
-			if (i < orig->taxonomy.nr) {
-				copy->taxonomy.category[i] = orig->taxonomy.category[i];
-				copy->taxonomy.category[i].value = copy_string(orig->taxonomy.category[i].value);
-			}
-		}
-		copy->taxonomy.nr = orig->taxonomy.nr;
-	}
+	copy_taxonomy(&orig->taxonomy, &copy->taxonomy);
 }
 
-void clear_dive_site(struct dive_site *ds)
+static void merge_string(char **a, char **b)
 {
-	free(ds->name);
-	free(ds->notes);
-	free(ds->description);
-	ds->name = 0;
-	ds->notes = 0;
-	ds->description = 0;
-	ds->latitude.udeg = 0;
-	ds->longitude.udeg = 0;
-	ds->uuid = 0;
-	ds->taxonomy.nr = 0;
-	free_taxonomy(&ds->taxonomy);
+	char *s1 = *a, *s2 = *b;
+
+	if (!s2)
+		return;
+
+	if (same_string(s1, s2))
+		return;
+
+	if (!s1) {
+		*a = strdup(s2);
+		return;
+	}
+
+	*a = format_string("(%s) or (%s)", s1, s2);
+	free(s1);
 }
 
-void merge_dive_sites(uint32_t ref, uint32_t* uuids, int count)
+/* Used to check on import if two dive sites are equivalent.
+ * Since currently no merging is performed, be very conservative
+ * and only consider equal dive sites that are exactly the same.
+ * Taxonomy is not compared, as no taxonomy is generated on
+ * import.
+ */
+static bool same_dive_site(const struct dive_site *a, const struct dive_site *b)
 {
-	int curr_dive, i;
-	struct dive *d;
-	for(i = 0; i < count; i++){
-		if (uuids[i] == ref)
-			continue;
-
-		for_each_dive(curr_dive, d) {
-			if (d->dive_site_uuid != uuids[i] )
-				continue;
-			d->dive_site_uuid = ref;
-		}
-	}
-
-	for(i = 0; i < count; i++) {
-		if (uuids[i] == ref)
-			continue;
-		delete_dive_site(uuids[i]);
-	}
-	mark_divelist_changed(true);
+	return same_string(a->name, b->name)
+	    && same_location(&a->location, &b->location)
+	    && same_string(a->description, b->description)
+	    && same_string(a->notes, b->notes);
 }
 
-uint32_t find_or_create_dive_site_with_name(const char *name, timestamp_t divetime)
+struct dive_site *get_same_dive_site(const struct dive_site *site)
 {
 	int i;
 	struct dive_site *ds;
-	for_each_dive_site(i,ds) {
+	for_each_dive_site (i, ds, &dive_site_table)
+		if (same_dive_site(ds, site))
+			return ds;
+	return NULL;
+}
+
+void merge_dive_site(struct dive_site *a, struct dive_site *b)
+{
+	if (!has_location(&a->location)) a->location = b->location;
+	merge_string(&a->name, &b->name);
+	merge_string(&a->notes, &b->notes);
+	merge_string(&a->description, &b->description);
+
+	if (!a->taxonomy.category) {
+		a->taxonomy = b->taxonomy;
+		memset(&b->taxonomy, 0, sizeof(b->taxonomy));
+	}
+}
+
+struct dive_site *find_or_create_dive_site_with_name(const char *name, struct dive_site_table *ds_table)
+{
+	int i;
+	struct dive_site *ds;
+	for_each_dive_site(i,ds, ds_table) {
 		if (same_string(name, ds->name))
 			break;
 	}
 	if (ds)
-		return ds->uuid;
-	return create_dive_site(name, divetime);
+		return ds;
+	return create_dive_site(name, ds_table);
 }
 
-static int compare_sites(const void *_a, const void *_b)
+void purge_empty_dive_sites(struct dive_site_table *ds_table)
 {
-	const struct dive_site *a = (const struct dive_site *)*(void **)_a;
-	const struct dive_site *b = (const struct dive_site *)*(void **)_b;
-	return a->uuid > b->uuid ? 1 : a->uuid == b->uuid ? 0 : -1;
+	int i, j;
+	struct dive *d;
+	struct dive_site *ds;
+
+	for (i = 0; i < ds_table->nr; i++) {
+		ds = get_dive_site(i, ds_table);
+		if (!dive_site_is_empty(ds))
+			continue;
+		for_each_dive(j, d) {
+			if (d->dive_site == ds)
+				unregister_dive_from_dive_site(d);
+		}
+	}
 }
 
-void dive_site_table_sort()
+void add_dive_to_dive_site(struct dive *d, struct dive_site *ds)
 {
-	qsort(dive_site_table.dive_sites, dive_site_table.nr, sizeof(struct dive_site *), compare_sites);
+	int idx;
+	if (d->dive_site == ds)
+		return;
+	if (d->dive_site) {
+		fprintf(stderr, "Warning: adding dive that already belongs to a dive site to a different site\n");
+		unregister_dive_from_dive_site(d);
+	}
+	idx = dive_table_get_insertion_index(&ds->dives, d);
+	add_to_dive_table(&ds->dives, idx, d);
+	d->dive_site = ds;
+}
+
+struct dive_site *unregister_dive_from_dive_site(struct dive *d)
+{
+	struct dive_site *ds = d->dive_site;
+	if (!ds)
+		return NULL;
+	remove_dive(d, &ds->dives);
+	d->dive_site = NULL;
+	return ds;
 }

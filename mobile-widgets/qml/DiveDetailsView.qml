@@ -1,27 +1,26 @@
-import QtQuick 2.3
+// SPDX-License-Identifier: GPL-2.0
+import QtQuick 2.6
 /*
 import QtWebView 1.0
 */
-import QtQuick.Controls 1.2
-import QtQuick.Controls.Styles 1.2
 import QtQuick.Dialogs 1.2
-import QtQuick.Layouts 1.1
+import QtQuick.Layouts 1.2
+import QtQuick.Controls 2.2 as Controls
 import org.subsurfacedivelog.mobile 1.0
-import org.kde.kirigami 2.0 as Kirigami
+import org.kde.kirigami 2.4 as Kirigami
 
 Item {
 	id: detailsView
 	property real gridWidth: detailsView.width - 2 * Kirigami.Units.gridUnit
-	property real col1Width: gridWidth * 0.23
-	property real col2Width: gridWidth * 0.37
-	property real col3Width: gridWidth * 0.20
-	property real col4Width: gridWidth * 0.20
+	property real col1Width: gridWidth * 0.40
+	property real col2Width: gridWidth * 0.30
+	property real col3Width: gridWidth * 0.30
 
 	width: diveDetailsPage.width - diveDetailsPage.leftPadding - diveDetailsPage.rightPadding
-	height: mainLayout.implicitHeight + bottomLayout.implicitHeight + Kirigami.Units.iconSizes.large
+	height: divePlate.implicitHeight + bottomLayout.implicitHeight + Kirigami.Units.iconSizes.large
 	Rectangle {
 		z: 99
-		color: Kirigami.Theme.textColor
+		color: subsurfaceTheme.textColor
 		opacity: 0.3
 		width: Kirigami.Units.smallSpacing/4
 		anchors {
@@ -30,247 +29,403 @@ Item {
 			bottom: parent.bottom
 		}
 	}
-	GridLayout {
-		id: mainLayout
-		anchors {
-			top: parent.top
-			left: parent.left
-			right: parent.right
-			margins: Kirigami.Units.gridUnit
-		}
-		columns: 4
-		rowSpacing: Kirigami.Units.smallSpacing * 2
-		columnSpacing: Kirigami.Units.smallSpacing
-
-		Kirigami.Heading {
-			id: detailsViewHeading
-			Layout.fillWidth: true
-			text: dive.location
-			font.underline: dive.gps !== ""
-			Layout.columnSpan: 4
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			Layout.topMargin: Kirigami.Units.largeSpacing
+	Item {
+		id: divePlate
+		width: parent.width - Kirigami.Units.gridUnit
+		height: childrenRect.height - Kirigami.Units.smallSpacing
+		anchors.left: parent.left
+		Controls.Label {
+			id: locationText
+			text: (undefined !== location && "" !== location) ? location : qsTr("<unnamed dive site>")
+			font.weight: Font.Bold
+			font.pointSize: subsurfaceTheme.titlePointSize
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			color: subsurfaceTheme.textColor
+			anchors {
+				left: parent.left
+				top: parent.top
+				right: gpsButton.left
+				margins: Math.round(Kirigami.Units.gridUnit / 2)
+			}
 			MouseArea {
 				anchors.fill: parent
+				enabled: gpsDecimal !== ""
 				onClicked: {
-					if (dive.gps !== "")
-						showMap(dive.gps)
+					showMap()
+					mapPage.centerOnDiveSite(diveSite)
 				}
 			}
 		}
-		Kirigami.Label {
-			id: dateLabel
-			text: qsTr("Date: ")
-			opacity: 0.6
+		SsrfButton {
+			id: gpsButton
+			anchors.right: parent.right
+			enabled: gps !== ""
+			text: qsTr("Map it")
+			onClicked: {
+				showMap()
+				mapPage.centerOnDiveSite(diveSite)
+			}
 		}
-		Kirigami.Label {
-			text: dive.date + " " + dive.time
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			Layout.columnSpan: 2
+		Row {
+			id: dateRow
+			anchors {
+				left: locationText.left
+				top: locationText.bottom
+				topMargin: Kirigami.Units.smallSpacing
+				bottom: numberText.bottom
+
+			}
+
+			Controls.Label {
+				text: dateTime
+				width: Math.max(locationText.width * 0.45, paintedWidth)
+				font.pointSize: subsurfaceTheme.smallPointSize
+				color: subsurfaceTheme.textColor
+			}
+			// let's try to show the depth / duration very compact
+			Controls.Label {
+				text: depthDuration
+				width: Math.max(Kirigami.Units.gridUnit * 3, paintedWidth)
+				font.pointSize: subsurfaceTheme.smallPointSize
+				color: subsurfaceTheme.textColor
+			}
 		}
-		Kirigami.Label {
+		Controls.Label {
 			id: numberText
-			text: "#" + dive.number
-			color: Kirigami.Theme.textColor
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+			text: "#" + number
+			font.pointSize: subsurfaceTheme.smallPointSize
+			color: subsurfaceTheme.textColor
+			anchors {
+				right: parent.right
+				top: locationText.bottom
+				topMargin: Kirigami.Units.smallSpacing
+			}
+		}
+		Row {
+			anchors {
+				left: dateRow.left
+				top: numberText.bottom
+				topMargin: Kirigami.Units.smallSpacing
+			}
+			Controls.Label {
+				id: ratingText
+				text: qsTr("Rating:")
+				font.pointSize: subsurfaceTheme.smallPointSize
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: ratingText.verticalCenter
+				source: (rating >= 1) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: ratingText.verticalCenter
+				source: (rating >= 2) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: ratingText.verticalCenter
+				source: (rating >= 3) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: ratingText.verticalCenter
+				source: (rating >= 4) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: ratingText.verticalCenter
+				source: (rating === 5) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+		}
+		Row {
+			anchors {
+				right: numberText.right
+				top: numberText.bottom
+				topMargin: Kirigami.Units.smallSpacing
+			}
+			Controls.Label {
+				id: visibilityText
+				text: qsTr("Visibility:")
+				font.pointSize: subsurfaceTheme.smallPointSize
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: visibilityText.verticalCenter
+				source: (viz >= 1) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: visibilityText.verticalCenter
+				source: (viz >= 2) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: visibilityText.verticalCenter
+				source: (viz >= 3) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: visibilityText.verticalCenter
+				source: (viz >= 4) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
+			Kirigami.Icon {
+				width: height
+				height: subsurfaceTheme.regularPointSize
+				anchors.verticalCenter: visibilityText.verticalCenter
+				source: (viz === 5) ? ":/icons/ic_star.svg" : ":/icons/ic_star_border.svg"
+				color: subsurfaceTheme.textColor
+			}
 		}
 
-		Kirigami.Label {
-			id: depthLabel
-			text: qsTr("Depth: ")
-			opacity: 0.6
+	}
+	GridLayout {
+		id: bottomLayout
+		anchors {
+			top: divePlate.bottom
+			left: parent.left
+			right: parent.right
+			margins: Math.round(Kirigami.Units.gridUnit / 2)
+			topMargin: Kirigami.Units.gridUnit
 		}
-		Kirigami.Label {
-			text: dive.depth
-			Layout.fillWidth: true
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-		}
-		Kirigami.Label {
-			text: qsTr("Duration: ")
-			opacity: 0.6
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			text: dive.duration
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-		}
+		columns: 3
+		rowSpacing: Kirigami.Units.smallSpacing * 2
+		columnSpacing: Kirigami.Units.smallSpacing
 
 		QMLProfile {
 			id: qmlProfile
-			visible: !dive.noDive
+			visible: !noDive
 			Layout.fillWidth: true
 			Layout.preferredHeight: Layout.minimumHeight
 			Layout.minimumHeight: width * 0.75
-			Layout.columnSpan: 4
+			Layout.columnSpan: 3
 			clip: false
 			Rectangle {
 				color: "transparent"
 				opacity: 0.6
 				border.width: 1
-				border.color: Kirigami.Theme.textColor;
+				border.color: subsurfaceTheme.primaryColor
 				anchors.fill: parent
 			}
 		}
-		Kirigami.Label {
+		Controls.Label {
 			id: noProfile
-			visible: dive.noDive
+			visible: noDive
 			Layout.fillWidth: true
-			Layout.columnSpan: 4
+			Layout.columnSpan: 3
 			Layout.margins: Kirigami.Units.gridUnit
 			horizontalAlignment: Text.AlignHCenter
 			text: qsTr("No profile to show")
 		}
-	}
-	GridLayout {
-		id: bottomLayout
-		anchors {
-			top: mainLayout.bottom
-			left: parent.left
-			right: parent.right
-			margins: Math.round(Kirigami.Units.gridUnit / 2)
-		}
-		columns: 4
-		rowSpacing: Kirigami.Units.smallSpacing * 2
-		columnSpacing: Kirigami.Units.smallSpacing
 
-		Kirigami.Heading {
-			Layout.fillWidth: true
-			level: 3
-			text: qsTr("Dive Details")
-			Layout.columnSpan: 4
-		}
-
-		Kirigami.Label {
+		// first row
+		//-----------
+		Controls.Label {
 			text: qsTr("Suit:")
-			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
 			opacity: 0.6
-			width: detailsView.col1Width
-			Layout.alignment: Qt.AlignRight
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			color: subsurfaceTheme.textColor
 		}
-		Kirigami.Label {
-			id: txtSuit
-			text: dive.suit
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			Layout.fillWidth: true
-		}
-
-		Kirigami.Label {
+		Controls.Label {
 			text: qsTr("Air Temp:")
+			opacity: 0.6
 			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-			opacity: 0.6
-			width: detailsView.col3Width
-			Layout.alignment: Qt.AlignRight
+			Layout.maximumWidth: detailsView.col2Width
+			color: subsurfaceTheme.textColor
 		}
-		Kirigami.Label {
-			id: txtAirTemp
-			text: dive.airTemp
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			width: detailsView.col4Width
-		}
-
-		Kirigami.Label {
-			text: qsTr("Cylinder:")
-			opacity: 0.6
-			width: detailsView.col1Width
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			id: txtCylinder
-			text: dive.getCylinder
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			Layout.fillWidth: true
-		}
-
-		Kirigami.Label {
+		Controls.Label {
 			text: qsTr("Water Temp:")
 			opacity: 0.6
-			width: detailsView.col3Width
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			id: txtWaterTemp
-			text: dive.waterTemp
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			width: detailsView.col4Width
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col3Width
+			color: subsurfaceTheme.textColor
 		}
 
-		Kirigami.Label {
-			text: qsTr("Dive Master:")
-			opacity: 0.6
-			width: detailsView.col1Width
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			id: txtDiveMaster
-			text: dive.divemaster
+		// second row
+		//------------
+		Controls.Label {
+			id: txtSuit
+			text: suit
 			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			id: txtAirTemp
+			text: airTemp
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col2Width
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			id: txtWaterTemp
+			text: waterTemp
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col3Width
+			color: subsurfaceTheme.textColor
+		}
+
+		Rectangle {
+			color: subsurfaceTheme.primaryColor
+			height: 1
+			opacity: 0.5
+			Layout.columnSpan: 3
 			Layout.fillWidth: true
 		}
 
-		Kirigami.Label {
+		// thrid row
+		//------------
+		Controls.Label {
+			text: qsTr("Cylinder:")
+			opacity: 0.6
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			Layout.bottomMargin: 0
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
 			text: qsTr("Weight:")
 			opacity: 0.6
-			width: detailsView.col3Width
-			Layout.alignment: Qt.AlignRight
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col2Width
+			Layout.bottomMargin: 0
+			color: subsurfaceTheme.textColor
 		}
-		Kirigami.Label {
-			id: txtWeight
-			text: dive.sumWeight
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			width: detailsView.col4Width
-		}
-
-		Kirigami.Label {
-			text: qsTr("Buddy:")
-			opacity: 0.6
-			width: detailsView.col1Width
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			id: txtBuddy
-			text: dive.buddy
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			Layout.fillWidth: true
-		}
-
-		Kirigami.Label {
+		Controls.Label {
 			text: qsTr("SAC:")
 			opacity: 0.6
-			width: detailsView.col3Width
-			Layout.alignment: Qt.AlignRight
-		}
-		Kirigami.Label {
-			id: txtSAC
-			text: dive.sac
-			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-			width: detailsView.col4Width
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col3Width
+			Layout.bottomMargin: 0
+			color: subsurfaceTheme.textColor
 		}
 
-		Kirigami.Heading {
+		// fourth row
+		//------------
+		Controls.Label {
+			id: txtCylinder
+			text: cylinder
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			id: txtWeight
+			text: sumWeight
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col2Width
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			id: txtSAC
+			text: sac
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col3Width
+			color: subsurfaceTheme.textColor
+		}
+
+		Rectangle {
+			color: subsurfaceTheme.primaryColor
+			height: 1
+			opacity: 0.5
+			Layout.columnSpan: 3
 			Layout.fillWidth: true
-			level: 3
+		}
+
+		// fifth row
+		//-----------
+		Controls.Label {
+			text: qsTr("Divemaster:")
+			opacity: 0.6
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			Layout.bottomMargin: 0
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			text: qsTr("Buddy:")
+			opacity: 0.6
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.columnSpan: 2
+			Layout.maximumWidth: detailsView.col2Width + detailsView.col3Width
+			Layout.bottomMargin: 0
+			color: subsurfaceTheme.textColor
+		}
+
+		// sixth row
+		//-----------
+		Controls.Label {
+			id: txtDiveMaster
+			text: diveMaster
+			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+			Layout.maximumWidth: detailsView.col1Width
+			color: subsurfaceTheme.textColor
+		}
+		Controls.Label {
+			id: txtBuddy
+			text: buddy
+			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+			Layout.columnSpan: 2
+			Layout.maximumWidth: detailsView.col2Width + detailsView.col3Width
+			color: subsurfaceTheme.textColor
+		}
+
+		Rectangle {
+			color: subsurfaceTheme.primaryColor
+			height: 1
+			opacity: 0.5
+			Layout.columnSpan: 3
+			Layout.fillWidth: true
+		}
+
+
+		Controls.Label {
+			Layout.fillWidth: true
+			opacity: 0.6
 			text: qsTr("Notes")
 			wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-			Layout.columnSpan: 4
+			Layout.columnSpan: 3
+			color: subsurfaceTheme.textColor
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			id: txtNotes
-			text: dive.notes
+			text: notes
 			focus: true
-			Layout.columnSpan: 4
+			Layout.columnSpan: 3
 			Layout.fillWidth: true
-			//selectByMouse: true
 			wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+			color: subsurfaceTheme.textColor
 		}
 		Item {
-			Layout.columnSpan: 4
+			Layout.columnSpan: 3
 			Layout.fillWidth: true
-			Layout.minimumHeight: Kirigami.Units.gridUnit * 3
+			Layout.minimumHeight: Kirigami.Units.gridUnit * 6
 		}
 		Component.onCompleted: {
 			qmlProfile.setMargin(Kirigami.Units.smallSpacing)
-			qmlProfile.diveId = model.dive.id;
+			qmlProfile.diveId = model.id;
 			qmlProfile.update();
 		}
 	}

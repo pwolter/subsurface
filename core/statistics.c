@@ -1,10 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /* statistics.c
  *
  * core logic for the Info & Stats page -
- * char *get_time_string(int seconds, int maxdays);
  * char *get_minutes(int seconds);
- * void process_all_dives(struct dive *dive, struct dive **prev_dive);
- * void get_selected_dives_text(char *buffer, int size);
+ * void calculate_stats_summary(struct stats_summary *out, bool selected_only);
+ * void calculate_stats_selected(stats_t *stats_selection);
  */
 #include "gettext.h"
 #include <string.h>
@@ -12,43 +12,37 @@
 
 #include "dive.h"
 #include "display.h"
-#include "divelist.h"
+#include "trip.h"
 #include "statistics.h"
-
-static stats_t stats;
-stats_t stats_selection;
-stats_t *stats_monthly = NULL;
-stats_t *stats_yearly = NULL;
-stats_t *stats_by_trip = NULL;
-stats_t *stats_by_type = NULL;
+#include "units.h"
 
 static void process_temperatures(struct dive *dp, stats_t *stats)
 {
-	int min_temp, mean_temp, max_temp = 0;
+	temperature_t min_temp, mean_temp, max_temp = {.mkelvin = 0};
 
-	max_temp = dp->maxtemp.mkelvin;
-	if (max_temp && (!stats->max_temp || max_temp > stats->max_temp))
-		stats->max_temp = max_temp;
+	max_temp.mkelvin = dp->maxtemp.mkelvin;
+	if (max_temp.mkelvin && (!stats->max_temp.mkelvin || max_temp.mkelvin > stats->max_temp.mkelvin))
+		stats->max_temp.mkelvin = max_temp.mkelvin;
 
-	min_temp = dp->mintemp.mkelvin;
-	if (min_temp && (!stats->min_temp || min_temp < stats->min_temp))
-		stats->min_temp = min_temp;
+	min_temp.mkelvin = dp->mintemp.mkelvin;
+	if (min_temp.mkelvin && (!stats->min_temp.mkelvin || min_temp.mkelvin < stats->min_temp.mkelvin))
+		stats->min_temp.mkelvin = min_temp.mkelvin;
 
-	if (min_temp || max_temp) {
-		mean_temp = min_temp;
-		if (mean_temp)
-			mean_temp = (mean_temp + max_temp) / 2;
+	if (min_temp.mkelvin || max_temp.mkelvin) {
+		mean_temp.mkelvin = min_temp.mkelvin;
+		if (mean_temp.mkelvin)
+			mean_temp.mkelvin = (mean_temp.mkelvin + max_temp.mkelvin) / 2;
 		else
-			mean_temp = max_temp;
-		stats->combined_temp += get_temp_units(mean_temp, NULL);
+			mean_temp.mkelvin = max_temp.mkelvin;
+		stats->combined_temp.mkelvin += mean_temp.mkelvin;
 		stats->combined_count++;
 	}
 }
 
-static void process_dive(struct dive *dp, stats_t *stats)
+static void process_dive(struct dive *dive, stats_t *stats)
 {
 	int old_tadt, sac_time = 0;
-	uint32_t duration = dp->duration.seconds;
+	int32_t duration = dive->duration.seconds;
 
 	old_tadt = stats->total_average_depth_time.seconds;
 	stats->total_time.seconds += duration;
@@ -56,32 +50,33 @@ static void process_dive(struct dive *dp, stats_t *stats)
 		stats->longest_time.seconds = duration;
 	if (stats->shortest_time.seconds == 0 || duration < stats->shortest_time.seconds)
 		stats->shortest_time.seconds = duration;
-	if (dp->maxdepth.mm > stats->max_depth.mm)
-		stats->max_depth.mm = dp->maxdepth.mm;
-	if (stats->min_depth.mm == 0 || dp->maxdepth.mm < stats->min_depth.mm)
-		stats->min_depth.mm = dp->maxdepth.mm;
+	if (dive->maxdepth.mm > stats->max_depth.mm)
+		stats->max_depth.mm = dive->maxdepth.mm;
+	if (stats->min_depth.mm == 0 || dive->maxdepth.mm < stats->min_depth.mm)
+		stats->min_depth.mm = dive->maxdepth.mm;
+	stats->combined_max_depth.mm += dive->maxdepth.mm;
 
-	process_temperatures(dp, stats);
+	process_temperatures(dive, stats);
 
 	/* Maybe we should drop zero-duration dives */
 	if (!duration)
 		return;
-	if (dp->meandepth.mm) {
+	if (dive->meandepth.mm) {
 		stats->total_average_depth_time.seconds += duration;
-		stats->avg_depth.mm = (1.0 * old_tadt * stats->avg_depth.mm +
-				       duration * dp->meandepth.mm) /
-				stats->total_average_depth_time.seconds;
+		stats->avg_depth.mm = lrint((1.0 * old_tadt * stats->avg_depth.mm +
+					duration * dive->meandepth.mm) /
+					stats->total_average_depth_time.seconds);
 	}
-	if (dp->sac > 100) { /* less than .1 l/min is bogus, even with a pSCR */
-		sac_time = stats->total_sac_time + duration;
-		stats->avg_sac.mliter = (1.0 * stats->total_sac_time * stats->avg_sac.mliter +
-					 duration * dp->sac) /
-					sac_time;
-		if (dp->sac > stats->max_sac.mliter)
-			stats->max_sac.mliter = dp->sac;
-		if (stats->min_sac.mliter == 0 || dp->sac < stats->min_sac.mliter)
-			stats->min_sac.mliter = dp->sac;
-		stats->total_sac_time = sac_time;
+	if (dive->sac > 100) { /* less than .1 l/min is bogus, even with a pSCR */
+		sac_time = stats->total_sac_time.seconds + duration;
+		stats->avg_sac.mliter = lrint((1.0 * stats->total_sac_time.seconds * stats->avg_sac.mliter +
+					 duration * dive->sac) /
+					 sac_time);
+		if (dive->sac > stats->max_sac.mliter)
+			stats->max_sac.mliter = dive->sac;
+		if (stats->min_sac.mliter == 0 || dive->sac < stats->min_sac.mliter)
+			stats->min_sac.mliter = dive->sac;
+		stats->total_sac_time.seconds = sac_time;
 	}
 }
 
@@ -92,9 +87,16 @@ char *get_minutes(int seconds)
 	return buf;
 }
 
-void process_all_dives(struct dive *dive, struct dive **prev_dive)
+/*
+ * Calculate a summary of the statistics and put in the stats_summary
+ * structure provided in the first parameter.
+ * Before first use, it should be initialized with init_stats_summary().
+ * After use, memory must be released with free_stats_summary().
+ */
+void calculate_stats_summary(struct stats_summary *out, bool selected_only)
 {
 	int idx;
+	int t_idx, d_idx, r;
 	struct dive *dp;
 	struct tm tm;
 	int current_year = 0;
@@ -104,10 +106,9 @@ void process_all_dives(struct dive *dive, struct dive **prev_dive)
 	int prev_month = 0, prev_year = 0;
 	int trip_iter = 0;
 	dive_trip_t *trip_ptr = 0;
-	unsigned int size, tsize;
+	size_t size, tsize, dsize, tmsize;
+	stats_t stats = { 0 };
 
-	*prev_dive = NULL;
-	memset(&stats, 0, sizeof(stats));
 	if (dive_table.nr > 0) {
 		stats.shortest_time.seconds = dive_table.dives[0]->duration.seconds;
 		stats.min_depth.mm = dive_table.dives[0]->maxdepth.mm;
@@ -118,46 +119,52 @@ void process_all_dives(struct dive *dive, struct dive **prev_dive)
 	 * case (one dive per year or all dives during
 	 * one month) for yearly and monthly statistics*/
 
-	free(stats_yearly);
-	free(stats_monthly);
-	free(stats_by_trip);
-	free(stats_by_type);
-
 	size = sizeof(stats_t) * (dive_table.nr + 1);
-	tsize = sizeof(stats_t) * (NUM_DC_TYPE + 1);
-	stats_yearly = malloc(size);
-	stats_monthly = malloc(size);
-	stats_by_trip = malloc(size);
-	stats_by_type = malloc(tsize);
-	if (!stats_yearly || !stats_monthly || !stats_by_trip || !stats_by_type)
+	tsize = sizeof(stats_t) * (NUM_DIVEMODE + 1);
+	dsize = sizeof(stats_t) * ((STATS_MAX_DEPTH / STATS_DEPTH_BUCKET) + 1);
+	tmsize = sizeof(stats_t) * ((STATS_MAX_TEMP / STATS_TEMP_BUCKET) + 1);
+	free_stats_summary(out);
+	out->stats_yearly = malloc(size);
+	out->stats_monthly = malloc(size);
+	out->stats_by_trip = malloc(size);
+	out->stats_by_type = malloc(tsize);
+	out->stats_by_depth = malloc(dsize);
+	out->stats_by_temp = malloc(tmsize);
+	if (!out->stats_yearly || !out->stats_monthly || !out->stats_by_trip ||
+		  !out->stats_by_type || !out->stats_by_depth || !out->stats_by_temp)
 		return;
-	memset(stats_yearly, 0, size);
-	memset(stats_monthly, 0, size);
-	memset(stats_by_trip, 0, size);
-	memset(stats_by_type, 0, tsize);
-	stats_yearly[0].is_year = true;
+	memset(out->stats_yearly, 0, size);
+	memset(out->stats_monthly, 0, size);
+	memset(out->stats_by_trip, 0, size);
+	memset(out->stats_by_type, 0, tsize);
+	memset(out->stats_by_depth, 0, dsize);
+	memset(out->stats_by_temp, 0, tmsize);
+	out->stats_yearly[0].is_year = true;
 
 	/* Setting the is_trip to true to show the location as first
 	 * field in the statistics window */
-	stats_by_type[0].location = strdup("All (by type stats)");
-	stats_by_type[0].is_trip = true;
-	stats_by_type[1].location = strdup("OC");
-	stats_by_type[1].is_trip = true;
-	stats_by_type[2].location = strdup("CCR");
-	stats_by_type[2].is_trip = true;
-	stats_by_type[3].location = strdup("pSCR");
-	stats_by_type[3].is_trip = true;
-	stats_by_type[4].location = strdup("Freedive");
-	stats_by_type[4].is_trip = true;
+	out->stats_by_type[0].location = strdup(translate("gettextFromC", "All (by type stats)"));
+	out->stats_by_type[0].is_trip = true;
+	out->stats_by_type[1].location = strdup(translate("gettextFromC", divemode_text_ui[OC]));
+	out->stats_by_type[1].is_trip = true;
+	out->stats_by_type[2].location = strdup(translate("gettextFromC", divemode_text_ui[CCR]));
+	out->stats_by_type[2].is_trip = true;
+	out->stats_by_type[3].location = strdup(translate("gettextFromC", divemode_text_ui[PSCR]));
+	out->stats_by_type[3].is_trip = true;
+	out->stats_by_type[4].location = strdup(translate("gettextFromC", divemode_text_ui[FREEDIVE]));
+	out->stats_by_type[4].is_trip = true;
+
+	out->stats_by_depth[0].location = strdup(translate("gettextFromC", "All (by max depth stats)"));
+	out->stats_by_depth[0].is_trip = true;
+
+	out->stats_by_temp[0].location = strdup(translate("gettextFromC", "All (by min. temp stats)"));
+	out->stats_by_temp[0].is_trip = true;
 
 	/* this relies on the fact that the dives in the dive_table
 	 * are in chronological order */
 	for_each_dive (idx, dp) {
-		if (dive && dp->when == dive->when) {
-			/* that's the one we are showing */
-			if (idx > 0)
-				*prev_dive = dive_table.dives[idx - 1];
-		}
+		if (selected_only && !dp->selected)
+			continue;
 		process_dive(dp, &stats);
 
 		/* yearly statistics */
@@ -167,20 +174,44 @@ void process_all_dives(struct dive *dive, struct dive **prev_dive)
 
 		if (current_year != tm.tm_year) {
 			current_year = tm.tm_year;
-			process_dive(dp, &(stats_yearly[++year_iter]));
-			stats_yearly[year_iter].is_year = true;
+			process_dive(dp, &(out->stats_yearly[++year_iter]));
+			out->stats_yearly[year_iter].is_year = true;
 		} else {
-			process_dive(dp, &(stats_yearly[year_iter]));
+			process_dive(dp, &(out->stats_yearly[year_iter]));
 		}
-		stats_yearly[year_iter].selection_size++;
-		stats_yearly[year_iter].period = current_year;
+		out->stats_yearly[year_iter].selection_size++;
+		out->stats_yearly[year_iter].period = current_year;
 
 		/* stats_by_type[0] is all the dives combined */
-		stats_by_type[0].selection_size++;
-		process_dive(dp, &(stats_by_type[0]));
+		out->stats_by_type[0].selection_size++;
+		process_dive(dp, &(out->stats_by_type[0]));
 
-		process_dive(dp, &(stats_by_type[dp->dc.divemode + 1]));
-		stats_by_type[dp->dc.divemode + 1].selection_size++;
+		process_dive(dp, &(out->stats_by_type[dp->dc.divemode + 1]));
+		out->stats_by_type[dp->dc.divemode + 1].selection_size++;
+
+		/* stats_by_depth[0] is all the dives combined */
+		out->stats_by_depth[0].selection_size++;
+		process_dive(dp, &(out->stats_by_depth[0]));
+
+		d_idx = dp->maxdepth.mm / (STATS_DEPTH_BUCKET * 1000);
+		if (d_idx < 0)
+			d_idx = 0;
+		if (d_idx >= STATS_MAX_DEPTH / STATS_DEPTH_BUCKET)
+			d_idx = STATS_MAX_DEPTH / STATS_DEPTH_BUCKET - 1;
+		process_dive(dp, &(out->stats_by_depth[d_idx + 1]));
+		out->stats_by_depth[d_idx + 1].selection_size++;
+
+		/* stats_by_temp[0] is all the dives combined */
+		out->stats_by_temp[0].selection_size++;
+		process_dive(dp, &(out->stats_by_temp[0]));
+
+		t_idx = ((int)mkelvin_to_C(dp->mintemp.mkelvin)) / STATS_TEMP_BUCKET;
+		if (t_idx < 0)
+			t_idx = 0;
+		if (t_idx >= STATS_MAX_TEMP / STATS_TEMP_BUCKET)
+			t_idx = STATS_MAX_TEMP / STATS_TEMP_BUCKET - 1;
+		process_dive(dp, &(out->stats_by_temp[t_idx + 1]));
+		out->stats_by_temp[t_idx + 1].selection_size++;
 
 		if (dp->divetrip != NULL) {
 			if (trip_ptr != dp->divetrip) {
@@ -189,15 +220,15 @@ void process_all_dives(struct dive *dive, struct dive **prev_dive)
 			}
 
 			/* stats_by_trip[0] is all the dives combined */
-			stats_by_trip[0].selection_size++;
-			process_dive(dp, &(stats_by_trip[0]));
-			stats_by_trip[0].is_trip = true;
-			stats_by_trip[0].location = strdup("All (by trip stats)");
+			out->stats_by_trip[0].selection_size++;
+			process_dive(dp, &(out->stats_by_trip[0]));
+			out->stats_by_trip[0].is_trip = true;
+			out->stats_by_trip[0].location = strdup(translate("gettextFromC", "All (by trip stats)"));
 
-			process_dive(dp, &(stats_by_trip[trip_iter]));
-			stats_by_trip[trip_iter].selection_size++;
-			stats_by_trip[trip_iter].is_trip = true;
-			stats_by_trip[trip_iter].location = dp->divetrip->location;
+			process_dive(dp, &(out->stats_by_trip[trip_iter]));
+			out->stats_by_trip[trip_iter].selection_size++;
+			out->stats_by_trip[trip_iter].is_trip = true;
+			out->stats_by_trip[trip_iter].location = dp->divetrip->location;
 		}
 
 		/* monthly statistics */
@@ -209,159 +240,132 @@ void process_all_dives(struct dive *dive, struct dive **prev_dive)
 			if (prev_month != current_month || prev_year != current_year)
 				month_iter++;
 		}
-		process_dive(dp, &(stats_monthly[month_iter]));
-		stats_monthly[month_iter].selection_size++;
-		stats_monthly[month_iter].period = current_month;
+		process_dive(dp, &(out->stats_monthly[month_iter]));
+		out->stats_monthly[month_iter].selection_size++;
+		out->stats_monthly[month_iter].period = current_month;
 		prev_month = current_month;
 		prev_year = current_year;
 	}
+
+	/* add labels for depth ranges up to maximum depth seen */
+	if (out->stats_by_depth[0].selection_size) {
+		d_idx = out->stats_by_depth[0].max_depth.mm;
+		if (d_idx > STATS_MAX_DEPTH * 1000)
+			d_idx = STATS_MAX_DEPTH * 1000;
+		for (r = 0; r * (STATS_DEPTH_BUCKET * 1000) < d_idx; ++r)
+			out->stats_by_depth[r+1].is_trip = true;
+	}
+
+	/* add labels for depth ranges up to maximum temperature seen */
+	if (out->stats_by_temp[0].selection_size) {
+		t_idx = (int)mkelvin_to_C(out->stats_by_temp[0].max_temp.mkelvin);
+		if (t_idx > STATS_MAX_TEMP)
+			t_idx = STATS_MAX_TEMP;
+		for (r = 0; r * STATS_TEMP_BUCKET < t_idx; ++r)
+			out->stats_by_temp[r+1].is_trip = true;
+	}
+}
+
+void free_stats_summary(struct stats_summary *stats)
+{
+	free(stats->stats_yearly);
+	free(stats->stats_monthly);
+	free(stats->stats_by_trip);
+	free(stats->stats_by_type);
+	free(stats->stats_by_depth);
+	free(stats->stats_by_temp);
+}
+
+void init_stats_summary(struct stats_summary *stats)
+{
+	stats->stats_yearly = NULL;
+	stats->stats_monthly = NULL;
+	stats->stats_by_trip = NULL;
+	stats->stats_by_type = NULL;
+	stats->stats_by_depth = NULL;
+	stats->stats_by_temp = NULL;
 }
 
 /* make sure we skip the selected summary entries */
-void process_selected_dives(void)
+void calculate_stats_selected(stats_t *stats_selection)
 {
 	struct dive *dive;
 	unsigned int i, nr;
 
-	memset(&stats_selection, 0, sizeof(stats_selection));
+	memset(stats_selection, 0, sizeof(*stats_selection));
 
 	nr = 0;
 	for_each_dive(i, dive) {
 		if (dive->selected) {
-			process_dive(dive, &stats_selection);
+			process_dive(dive, stats_selection);
 			nr++;
 		}
 	}
-	stats_selection.selection_size = nr;
-}
-
-char *get_time_string_s(int seconds, int maxdays, bool freediving)
-{
-	static char buf[80];
-	if (maxdays && seconds > 3600 * 24 * maxdays) {
-		snprintf(buf, sizeof(buf), translate("gettextFromC", "more than %d days"), maxdays);
-	} else {
-		int days = seconds / 3600 / 24;
-		int hours = (seconds - days * 3600 * 24) / 3600;
-		int minutes = (seconds - days * 3600 * 24 - hours * 3600) / 60;
-		int secs = (seconds - days * 3600 * 24 - hours * 3600 - minutes*60);
-		if (days > 0)
-			snprintf(buf, sizeof(buf), translate("gettextFromC", "%dd %dh %dmin"), days, hours, minutes);
-		else
-			if (freediving && seconds < 3600)
-				snprintf(buf, sizeof(buf), translate("gettextFromC", "%dmin %dsecs"), minutes, secs);
-			else
-				snprintf(buf, sizeof(buf), translate("gettextFromC", "%dh %dmin"), hours, minutes);
-	}
-	return buf;
-}
-
-/* this gets called when at least two but not all dives are selected */
-static void get_ranges(char *buffer, int size)
-{
-	int i, len;
-	int first = -1, last = -1;
-	struct dive *dive;
-
-	snprintf(buffer, size, "%s", translate("gettextFromC", "for dives #"));
-	for_each_dive (i, dive) {
-		if (!dive->selected)
-			continue;
-		if (dive->number < 1) {
-			/* uhh - weird numbers - bail */
-			snprintf(buffer, size, "%s", translate("gettextFromC", "for selected dives"));
-			return;
-		}
-		len = strlen(buffer);
-		if (last == -1) {
-			snprintf(buffer + len, size - len, "%d", dive->number);
-			first = last = dive->number;
-		} else {
-			if (dive->number == last + 1) {
-				last++;
-				continue;
-			} else {
-				if (first == last)
-					snprintf(buffer + len, size - len, ", %d", dive->number);
-				else if (first + 1 == last)
-					snprintf(buffer + len, size - len, ", %d, %d", last, dive->number);
-				else
-					snprintf(buffer + len, size - len, "-%d, %d", last, dive->number);
-				first = last = dive->number;
-			}
-		}
-	}
-	len = strlen(buffer);
-	if (first != last) {
-		if (first + 1 == last)
-			snprintf(buffer + len, size - len, ", %d", last);
-		else
-			snprintf(buffer + len, size - len, "-%d", last);
-	}
-}
-
-void get_selected_dives_text(char *buffer, size_t size)
-{
-	if (amount_selected == 1) {
-		if (current_dive)
-			snprintf(buffer, size, translate("gettextFromC", "for dive #%d"), current_dive->number);
-		else
-			snprintf(buffer, size, "%s", translate("gettextFromC", "for selected dive"));
-	} else if (amount_selected == (unsigned int)dive_table.nr) {
-		snprintf(buffer, size, "%s", translate("gettextFromC", "for all dives"));
-	} else if (amount_selected == 0) {
-		snprintf(buffer, size, "%s", translate("gettextFromC", "(no dives)"));
-	} else {
-		get_ranges(buffer, size);
-		if (strlen(buffer) == size - 1) {
-			/* add our own ellipse... the way Pango does this is ugly
-			 * as it will leave partial numbers there which I don't like */
-			size_t offset = 4;
-			while (offset < size && isdigit(buffer[size - offset]))
-				offset++;
-			strcpy(buffer + size - offset, "...");
-		}
-	}
+	stats_selection->selection_size = nr;
 }
 
 #define SOME_GAS 5000 // 5bar drop in cylinder pressure makes cylinder used
 
-bool is_cylinder_used(struct dive *dive, int idx)
+bool has_gaschange_event(const struct dive *dive, const struct divecomputer *dc, int idx)
 {
-	struct divecomputer *dc;
-	bool firstGasExplicit = false;
+	bool first_gas_explicit = false;
+	const struct event *event = get_next_event(dc->events, "gaschange");
+	while (event) {
+		if (dc->sample && (event->time.seconds == 0 ||
+				   (dc->samples && dc->sample[0].time.seconds == event->time.seconds)))
+			first_gas_explicit = true;
+		if (get_cylinder_index(dive, event) == idx)
+			return true;
+		event = get_next_event(event->next, "gaschange");
+	}
+	if (dc->divemode == CCR) {
+		if (idx == get_cylinder_idx_by_use(dive, DILUENT))
+			return true;
+		if (idx == get_cylinder_idx_by_use(dive, OXYGEN))
+			return true;
+	}
+	return !first_gas_explicit && idx == 0;
+}
+
+bool is_cylinder_used(const struct dive *dive, int idx)
+{
+	const struct divecomputer *dc;
 	if (cylinder_none(&dive->cylinder[idx]))
 		return false;
 
 	if ((dive->cylinder[idx].start.mbar - dive->cylinder[idx].end.mbar) > SOME_GAS)
 		return true;
+
+	if ((dive->cylinder[idx].sample_start.mbar - dive->cylinder[idx].sample_end.mbar) > SOME_GAS)
+		return true;
+
 	for_each_dc(dive, dc) {
-		struct event *event = get_next_event(dc->events, "gaschange");
-		while (event) {
-			if (dc->sample && (event->time.seconds == 0 ||
-					   (dc->samples && dc->sample[0].time.seconds == event->time.seconds)))
-				firstGasExplicit = true;
-			if (get_cylinder_index(dive, event) == idx)
-				return true;
-			event = get_next_event(event->next, "gaschange");
-		}
-		if (dc->divemode == CCR && (idx == dive->diluent_cylinder_index || idx == dive->oxygen_cylinder_index))
+		if (has_gaschange_event(dive, dc, idx))
 			return true;
 	}
-	if (idx == 0 && !firstGasExplicit)
-		return true;
+	return false;
+}
+
+bool is_cylinder_prot(const struct dive *dive, int idx)
+{
+	const struct divecomputer *dc;
+	if (cylinder_none(&dive->cylinder[idx]))
+		return false;
+
+	for_each_dc(dive, dc) {
+		if (has_gaschange_event(dive, dc, idx))
+			return true;
+	}
 	return false;
 }
 
 void get_gas_used(struct dive *dive, volume_t gases[MAX_CYLINDERS])
 {
 	int idx;
+
 	for (idx = 0; idx < MAX_CYLINDERS; idx++) {
 		cylinder_t *cyl = &dive->cylinder[idx];
 		pressure_t start, end;
-
-		if (!is_cylinder_used(dive, idx))
-			continue;
 
 		start = cyl->start.mbar ? cyl->start : cyl->sample_start;
 		end = cyl->end.mbar ? cyl->end : cyl->sample_end;
@@ -375,14 +379,14 @@ static void get_gas_parts(struct gasmix mix, volume_t vol, int o2_in_topup, volu
 {
 	volume_t air = {};
 
-	if (gasmix_is_air(&mix)) {
+	if (gasmix_is_air(mix)) {
 		o2->mliter = 0;
 		he->mliter = 0;
 		return;
 	}
 
-	air.mliter = rint(((double)vol.mliter * (1000 - get_he(&mix) - get_o2(&mix))) / (1000 - o2_in_topup));
-	he->mliter = rint(((double)vol.mliter * get_he(&mix)) / 1000.0);
+	air.mliter = lrint(((double)vol.mliter * (1000 - get_he(mix) - get_o2(mix))) / (1000 - o2_in_topup));
+	he->mliter = lrint(((double)vol.mliter * get_he(mix)) / 1000.0);
 	o2->mliter += vol.mliter - he->mliter - air.mliter;
 }
 

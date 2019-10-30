@@ -1,15 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <QString>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
 #include <QTextStream>
 #include "divelogexportlogic.h"
-#include "helpers.h"
+#include "errorhelper.h"
+#include "qthelper.h"
 #include "units.h"
 #include "statistics.h"
 #include "save-html.h"
 
-void file_copy_and_overwrite(const QString &fileName, const QString &newName)
+static void file_copy_and_overwrite(const QString &fileName, const QString &newName)
 {
 	QFile file(newName);
 	if (file.exists())
@@ -17,7 +19,7 @@ void file_copy_and_overwrite(const QString &fileName, const QString &newName)
 	QFile::copy(fileName, newName);
 }
 
-void exportHTMLsettings(const QString &filename, struct htmlExportSetting &hes)
+static void exportHTMLsettings(const QString &filename, struct htmlExportSetting &hes)
 {
 	QString fontSize = hes.fontSize;
 	QString fontFamily = hes.fontFamily;
@@ -51,7 +53,8 @@ static void exportHTMLstatisticsTotal(QTextStream &out, stats_t *total_stats)
 	out << "{";
 	out << "\"YEAR\":\"Total\",";
 	out << "\"DIVES\":\"" << total_stats->selection_size << "\",";
-	out << "\"TOTAL_TIME\":\"" << get_time_string(total_stats->total_time.seconds, 0) << "\",";
+	out << "\"TOTAL_TIME\":\"" << get_dive_duration_string(total_stats->total_time.seconds,
+									gettextFromC::tr("h"), gettextFromC::tr("min"), gettextFromC::tr("sec"), " ") << "\",";
 	out << "\"AVERAGE_TIME\":\"--\",";
 	out << "\"SHORTEST_TIME\":\"--\",";
 	out << "\"LONGEST_TIME\":\"--\",";
@@ -73,38 +76,44 @@ static void exportHTMLstatistics(const QString filename, struct htmlExportSettin
 	QFile file(filename);
 	file.open(QIODevice::WriteOnly | QIODevice::Text);
 	QTextStream out(&file);
+	stats_summary_auto_free stats;
 
 	stats_t total_stats;
 
+	calculate_stats_summary(&stats, hes.selectedOnly);
 	total_stats.selection_size = 0;
 	total_stats.total_time.seconds = 0;
 
 	int i = 0;
 	out << "divestat=[";
 	if (hes.yearlyStatistics) {
-		while (stats_yearly != NULL && stats_yearly[i].period) {
+		while (stats.stats_yearly != NULL && stats.stats_yearly[i].period) {
 			out << "{";
-			out << "\"YEAR\":\"" << stats_yearly[i].period << "\",";
-			out << "\"DIVES\":\"" << stats_yearly[i].selection_size << "\",";
-			out << "\"TOTAL_TIME\":\"" << get_time_string(stats_yearly[i].total_time.seconds, 0) << "\",";
-			out << "\"AVERAGE_TIME\":\"" << get_minutes(stats_yearly[i].total_time.seconds / stats_yearly[i].selection_size) << "\",";
-			out << "\"SHORTEST_TIME\":\"" << get_minutes(stats_yearly[i].shortest_time.seconds) << "\",";
-			out << "\"LONGEST_TIME\":\"" << get_minutes(stats_yearly[i].longest_time.seconds) << "\",";
-			out << "\"AVG_DEPTH\":\"" << get_depth_string(stats_yearly[i].avg_depth) << "\",";
-			out << "\"MIN_DEPTH\":\"" << get_depth_string(stats_yearly[i].min_depth) << "\",";
-			out << "\"MAX_DEPTH\":\"" << get_depth_string(stats_yearly[i].max_depth) << "\",";
-			out << "\"AVG_SAC\":\"" << get_volume_string(stats_yearly[i].avg_sac) << "\",";
-			out << "\"MIN_SAC\":\"" << get_volume_string(stats_yearly[i].min_sac) << "\",";
-			out << "\"MAX_SAC\":\"" << get_volume_string(stats_yearly[i].max_sac) << "\",";
-			if ( stats_yearly[i].combined_count )
-				out << "\"AVG_TEMP\":\"" << QString::number(stats_yearly[i].combined_temp / stats_yearly[i].combined_count, 'f', 1) << "\",";
-			else
+			out << "\"YEAR\":\"" << stats.stats_yearly[i].period << "\",";
+			out << "\"DIVES\":\"" << stats.stats_yearly[i].selection_size << "\",";
+			out << "\"TOTAL_TIME\":\"" << get_dive_duration_string(stats.stats_yearly[i].total_time.seconds,
+											gettextFromC::tr("h"), gettextFromC::tr("min"), gettextFromC::tr("sec"), " ") << "\",";
+			out << "\"AVERAGE_TIME\":\"" << get_minutes(stats.stats_yearly[i].total_time.seconds / stats.stats_yearly[i].selection_size) << "\",";
+			out << "\"SHORTEST_TIME\":\"" << get_minutes(stats.stats_yearly[i].shortest_time.seconds) << "\",";
+			out << "\"LONGEST_TIME\":\"" << get_minutes(stats.stats_yearly[i].longest_time.seconds) << "\",";
+			out << "\"AVG_DEPTH\":\"" << get_depth_string(stats.stats_yearly[i].avg_depth) << "\",";
+			out << "\"MIN_DEPTH\":\"" << get_depth_string(stats.stats_yearly[i].min_depth) << "\",";
+			out << "\"MAX_DEPTH\":\"" << get_depth_string(stats.stats_yearly[i].max_depth) << "\",";
+			out << "\"AVG_SAC\":\"" << get_volume_string(stats.stats_yearly[i].avg_sac) << "\",";
+			out << "\"MIN_SAC\":\"" << get_volume_string(stats.stats_yearly[i].min_sac) << "\",";
+			out << "\"MAX_SAC\":\"" << get_volume_string(stats.stats_yearly[i].max_sac) << "\",";
+			if (stats.stats_yearly[i].combined_count) {
+				temperature_t avg_temp;
+				avg_temp.mkelvin = stats.stats_yearly[i].combined_temp.mkelvin / stats.stats_yearly[i].combined_count;
+				out << "\"AVG_TEMP\":\"" << get_temperature_string(avg_temp) << "\",";
+			} else {
 				out << "\"AVG_TEMP\":\"0.0\",";
-			out << "\"MIN_TEMP\":\"" << ( stats_yearly[i].min_temp == 0 ? 0 : get_temp_units(stats_yearly[i].min_temp, NULL)) << "\",";
-			out << "\"MAX_TEMP\":\"" << ( stats_yearly[i].max_temp == 0 ? 0 : get_temp_units(stats_yearly[i].max_temp, NULL)) << "\",";
+			}
+			out << "\"MIN_TEMP\":\"" << (stats.stats_yearly[i].min_temp.mkelvin == 0 ? 0 : get_temperature_string(stats.stats_yearly[i].min_temp)) << "\",";
+			out << "\"MAX_TEMP\":\"" << (stats.stats_yearly[i].max_temp.mkelvin == 0 ? 0 : get_temperature_string(stats.stats_yearly[i].max_temp)) << "\",";
 			out << "},";
-			total_stats.selection_size += stats_yearly[i].selection_size;
-			total_stats.total_time.seconds += stats_yearly[i].total_time.seconds;
+			total_stats.selection_size += stats.stats_yearly[i].selection_size;
+			total_stats.total_time.seconds += stats.stats_yearly[i].total_time.seconds;
 			i++;
 		}
 		exportHTMLstatisticsTotal(out, &total_stats);
@@ -120,30 +129,30 @@ void exportHtmlInitLogic(const QString &filename, struct htmlExportSetting &hes)
 	QFile file(filename);
 	QFileInfo info(file);
 	QDir mainDir = info.absoluteDir();
-	mainDir.mkdir(file.fileName() + "_files");
-	QString exportFiles = file.fileName() + "_files";
+	QString exportFiles = file.fileName() + "_files" + QDir::separator();
+	mainDir.mkdir(exportFiles);
 
-	QString json_dive_data = exportFiles + QDir::separator() + "file.js";
-	QString json_settings = exportFiles + QDir::separator() + "settings.js";
-	QString translation = exportFiles + QDir::separator() + "translation.js";
-	QString stat_file = exportFiles + QDir::separator() + "stat.js";
-	exportFiles += "/";
+	QString json_dive_data = exportFiles + "file.js";
+	QString json_settings = exportFiles + "settings.js";
+	QString translation = exportFiles + "translation.js";
+	QString stat_file = exportFiles + "stat.js";
 
 	if (hes.exportPhotos) {
-		photosDirectory = exportFiles + QDir::separator() + "photos" + QDir::separator();
+		photosDirectory = exportFiles + "photos" + QDir::separator();
 		mainDir.mkdir(photosDirectory);
 	}
 
-
 	exportHTMLsettings(json_settings, hes);
 	exportHTMLstatistics(stat_file, hes);
-	export_translation(translation.toUtf8().data());
+	export_translation(qPrintable(translation));
 
 	export_HTML(qPrintable(json_dive_data), qPrintable(photosDirectory), hes.selectedOnly, hes.listOnly);
 
 	QString searchPath = getSubsurfaceDataPath("theme");
-	if (searchPath.isEmpty())
+	if (searchPath.isEmpty()) {
+		report_error(qPrintable(gettextFromC::tr("Cannot find a folder called 'theme' in the standard locations")));
 		return;
+	}
 
 	searchPath += QDir::separator();
 

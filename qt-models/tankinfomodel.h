@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef TANKINFOMODEL_H
 #define TANKINFOMODEL_H
 
@@ -17,11 +18,10 @@ public:
 	};
 	TankInfoModel();
 
-	/*reimp*/ QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	/*reimp*/ int rowCount(const QModelIndex &parent = QModelIndex()) const;
-	/*reimp*/ bool insertRows(int row, int count, const QModelIndex &parent = QModelIndex());
-	/*reimp*/ bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-	const QString &biggerString() const;
+	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+	int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+	bool insertRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
+	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
 	void clear();
 public
 slots:
@@ -29,7 +29,6 @@ slots:
 
 private:
 	int rows;
-	QString biggerEntry;
 };
 
 #endif

@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "preferences_defaults.h"
 #include "ui_preferences_defaults.h"
 #include "core/dive.h"
-#include "core/prefs-macros.h"
-#include "core/subsurface-qt/SettingsObjectWrapper.h"
+#include "core/settings/qPrefGeneral.h"
+#include "core/settings/qPrefDisplay.h"
+#include "core/settings/qPrefCloudStorage.h"
+#include "core/settings/qPrefDiveComputer.h"
 
 #include <QFileDialog>
+#include <QProcess>
+#include <QMessageBox>
 
-PreferencesDefaults::PreferencesDefaults(): AbstractPreferencesWidget(tr("Defaults"), QIcon(":defaults"), 0 ), ui(new Ui::PreferencesDefaults())
+PreferencesDefaults::PreferencesDefaults(): AbstractPreferencesWidget(tr("General"), QIcon(":preferences-other-icon"), 0 ), ui(new Ui::PreferencesDefaults())
 {
 	ui->setupUi(this);
 }
@@ -19,7 +24,7 @@ PreferencesDefaults::~PreferencesDefaults()
 void PreferencesDefaults::on_chooseFile_clicked()
 {
 	QFileInfo fi(system_default_filename());
-	QString choosenFileName = QFileDialog::getOpenFileName(this, tr("Open default log file"), fi.absolutePath(), tr("Subsurface XML files (*.ssrf *.xml *.XML)"));
+	QString choosenFileName = QFileDialog::getOpenFileName(this, tr("Open default log file"), fi.absolutePath(), tr("Subsurface files") + " (*.ssrf *.xml)");
 
 	if (!choosenFileName.isEmpty())
 		ui->defaultfilename->setText(choosenFileName);
@@ -42,26 +47,79 @@ void PreferencesDefaults::on_localDefaultFile_toggled(bool toggle)
 	ui->chooseFile->setEnabled(toggle);
 }
 
+void PreferencesDefaults::checkFfmpegExecutable()
+{
+	QString s = ui->ffmpegExecutable->text().trimmed();
+
+	// If the user didn't provide a string they probably didn't intend to run ffmeg,
+	// so let's not give an error message.
+	if (s.isEmpty())
+		return;
+
+	// Try to execute ffmpeg. But wait at most 2 sec for startup and execution
+	// so that the UI doesn't hang unnecessarily.
+	QProcess ffmpeg;
+	ffmpeg.start(s);
+	if (!ffmpeg.waitForStarted(2000) || !ffmpeg.waitForFinished(3000))
+		QMessageBox::warning(this, tr("Warning"), tr("Couldn't execute ffmpeg at given location. Thumbnailing will not work."));
+}
+
+void PreferencesDefaults::on_ffmpegFile_clicked()
+{
+	QFileInfo fi(system_default_filename());
+	QString ffmpegFileName = QFileDialog::getOpenFileName(this, tr("Select ffmpeg executable"));
+
+	if (!ffmpegFileName.isEmpty()) {
+		ui->ffmpegExecutable->setText(ffmpegFileName);
+		checkFfmpegExecutable();
+	}
+}
+
+void PreferencesDefaults::on_ffmpegExecutable_editingFinished()
+{
+	checkFfmpegExecutable();
+}
+
+void PreferencesDefaults::on_extractVideoThumbnails_toggled(bool toggled)
+{
+	ui->videoThumbnailPosition->setEnabled(toggled);
+	ui->ffmpegExecutable->setEnabled(toggled);
+	ui->ffmpegFile->setEnabled(toggled);
+}
+
+void PreferencesDefaults::on_resetRememberedDCs_clicked()
+{
+	qPrefDiveComputer::set_vendor1(QString());
+	qPrefDiveComputer::set_vendor2(QString());
+	qPrefDiveComputer::set_vendor3(QString());
+	qPrefDiveComputer::set_vendor4(QString());
+}
+
+void PreferencesDefaults::on_resetSettings_clicked()
+{
+	// apparently this button was never hooked up?
+}
+
 void PreferencesDefaults::refreshSettings()
 {
-	ui->font->setCurrentFont(QString(prefs.divelist_font));
-	ui->fontsize->setValue(prefs.font_size);
-	ui->defaultfilename->setText(prefs.default_filename);
-	ui->noDefaultFile->setChecked(prefs.default_file_behavior == NO_DEFAULT_FILE);
-	ui->cloudDefaultFile->setChecked(prefs.default_file_behavior == CLOUD_DEFAULT_FILE);
-	ui->localDefaultFile->setChecked(prefs.default_file_behavior == LOCAL_DEFAULT_FILE);
+	ui->font->setCurrentFont(qPrefDisplay::divelist_font());
+	ui->fontsize->setValue(qPrefDisplay::font_size());
+	ui->defaultfilename->setText(qPrefGeneral::default_filename());
+	ui->noDefaultFile->setChecked(qPrefGeneral::default_file_behavior() == NO_DEFAULT_FILE);
+	ui->cloudDefaultFile->setChecked(qPrefGeneral::default_file_behavior() == CLOUD_DEFAULT_FILE);
+	ui->localDefaultFile->setChecked(qPrefGeneral::default_file_behavior() == LOCAL_DEFAULT_FILE);
 
 	ui->default_cylinder->clear();
-	for (int i = 0; tank_info[i].name != NULL; i++) {
+	for (int i = 0; i < MAX_TANK_INFO && tank_info[i].name != NULL; i++) {
 		ui->default_cylinder->addItem(tank_info[i].name);
-		if (prefs.default_cylinder && strcmp(tank_info[i].name, prefs.default_cylinder) == 0)
+		if (qPrefGeneral::default_cylinder() == tank_info[i].name)
 			ui->default_cylinder->setCurrentIndex(i);
 	}
-	ui->displayinvalid->setChecked(prefs.display_invalid_dives);
-	ui->velocitySlider->setValue(prefs.animation_speed);
-	ui->btnUseDefaultFile->setChecked(prefs.use_default_file);
+	ui->displayinvalid->setChecked(qPrefDisplay::display_invalid_dives());
+	ui->velocitySlider->setValue(qPrefDisplay::animation_speed());
+	ui->btnUseDefaultFile->setChecked(qPrefGeneral::use_default_file());
 
-	if (prefs.cloud_verification_status == CS_VERIFIED) {
+	if (qPrefCloudStorage::cloud_verification_status() == qPrefCloudStorage::CS_VERIFIED) {
 		ui->cloudDefaultFile->setEnabled(true);
 	} else {
 		if (ui->cloudDefaultFile->isChecked())
@@ -69,29 +127,37 @@ void PreferencesDefaults::refreshSettings()
 		ui->cloudDefaultFile->setEnabled(false);
 	}
 
-	ui->defaultfilename->setEnabled(prefs.default_file_behavior == LOCAL_DEFAULT_FILE);
-	ui->btnUseDefaultFile->setEnabled(prefs.default_file_behavior == LOCAL_DEFAULT_FILE);
-	ui->chooseFile->setEnabled(prefs.default_file_behavior == LOCAL_DEFAULT_FILE);
+	ui->defaultfilename->setEnabled(qPrefGeneral::default_file_behavior() == LOCAL_DEFAULT_FILE);
+	ui->btnUseDefaultFile->setEnabled(qPrefGeneral::default_file_behavior() == LOCAL_DEFAULT_FILE);
+	ui->chooseFile->setEnabled(qPrefGeneral::default_file_behavior() == LOCAL_DEFAULT_FILE);
+
+	ui->videoThumbnailPosition->setEnabled(qPrefGeneral::extract_video_thumbnails());
+	ui->ffmpegExecutable->setEnabled(qPrefGeneral::extract_video_thumbnails());
+	ui->ffmpegFile->setEnabled(qPrefGeneral::extract_video_thumbnails());
+
+	ui->extractVideoThumbnails->setChecked(qPrefGeneral::extract_video_thumbnails());
+	ui->videoThumbnailPosition->setValue(qPrefGeneral::extract_video_thumbnails_position());
+	ui->ffmpegExecutable->setText(qPrefGeneral::ffmpeg_executable());
 }
 
 void PreferencesDefaults::syncSettings()
 {
-	auto general = SettingsObjectWrapper::instance()->general_settings;
-	general->setDefaultFilename(ui->defaultfilename->text());
-	general->setDefaultCylinder(ui->default_cylinder->currentText());
-	general->setUseDefaultFile(ui->btnUseDefaultFile->isChecked());
+	auto general = qPrefGeneral::instance();
+	general->set_default_filename(ui->defaultfilename->text());
+	general->set_default_cylinder(ui->default_cylinder->currentText());
+	general->set_use_default_file(ui->btnUseDefaultFile->isChecked());
 	if (ui->noDefaultFile->isChecked())
-		general->setDefaultFileBehavior(NO_DEFAULT_FILE);
+		general->set_default_file_behavior(NO_DEFAULT_FILE);
 	else if (ui->localDefaultFile->isChecked())
-		general->setDefaultFileBehavior(LOCAL_DEFAULT_FILE);
+		general->set_default_file_behavior(LOCAL_DEFAULT_FILE);
 	else if (ui->cloudDefaultFile->isChecked())
-		general->setDefaultFileBehavior(CLOUD_DEFAULT_FILE);
+		general->set_default_file_behavior(CLOUD_DEFAULT_FILE);
+	general->set_extract_video_thumbnails(ui->extractVideoThumbnails->isChecked());
+	general->set_extract_video_thumbnails_position(ui->videoThumbnailPosition->value());
+	general->set_ffmpeg_executable(ui->ffmpegExecutable->text());
 
-	auto display =  SettingsObjectWrapper::instance()->display_settings;
-	display->setDivelistFont(ui->font->currentFont().toString());
-	display->setFontSize(ui->fontsize->value());
-	display->setDisplayInvalidDives(ui->displayinvalid->isChecked());
-
-	auto animation = SettingsObjectWrapper::instance()->animation_settings;
-	animation->setAnimationSpeed(ui->velocitySlider->value());
+	qPrefDisplay::set_divelist_font(ui->font->currentFont().toString());
+	qPrefDisplay::set_font_size(ui->fontsize->value());
+	qPrefDisplay::set_display_invalid_dives(ui->displayinvalid->isChecked());
+	qPrefDisplay::set_animation_speed(ui->velocitySlider->value());
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef GPSLISTMODEL_H
 #define GPSLISTMODEL_H
 
@@ -9,7 +10,6 @@ class GpsListModel : public QAbstractListModel
 {
 	Q_OBJECT
 public:
-
 	enum GpsListRoles {
 		GpsDateRole = Qt::UserRole + 1,
 		GpsNameRole,
@@ -19,16 +19,14 @@ public:
 	};
 
 	static GpsListModel *instance();
-	GpsListModel(QObject *parent = 0);
-	void addGpsFix(gpsTracker g);
 	void clear();
 	int rowCount(const QModelIndex &parent = QModelIndex()) const;
 	QHash<int, QByteArray> roleNames() const;
 	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
 	void update();
 private:
+	GpsListModel();
 	QVector<gpsTracker> m_gpsFixes;
-	static GpsListModel *m_instance;
 };
 
 #endif // GPSLISTMODEL_H

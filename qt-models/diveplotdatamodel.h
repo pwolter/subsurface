@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVEPLOTDATAMODEL_H
 #define DIVEPLOTDATAMODEL_H
 
 #include <QAbstractTableModel>
 
 #include "core/display.h"
+#include "core/deco.h"
+#include "core/planner.h"
 
 struct dive;
 struct plot_data;
@@ -19,7 +22,6 @@ public:
 		TEMPERATURE,
 		USERENTERED,
 		COLOR,
-		CYLINDERINDEX,
 		SENSOR_PRESSURE,
 		INTERPOLATED_PRESSURE,
 		SAC,
@@ -63,6 +65,7 @@ public:
 		CCRSENSOR1,
 		CCRSENSOR2,
 		CCRSENSOR3,
+		SCR_OC_PO2,
 		HEARTBEAT,
 		AMBPRESSURE,
 		GFLINE,
@@ -70,10 +73,10 @@ public:
 		COLUMNS
 	};
 	explicit DivePlotDataModel(QObject *parent = 0);
-	virtual int columnCount(const QModelIndex &parent = QModelIndex()) const;
-	virtual QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
-	virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	virtual int rowCount(const QModelIndex &parent = QModelIndex()) const;
+	int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+	int rowCount(const QModelIndex &parent = QModelIndex()) const override;
 	void clear();
 	void setDive(struct dive *d, const plot_info &pInfo);
 	const plot_info &data() const;
@@ -81,7 +84,6 @@ public:
 	double pheMax();
 	double pn2Max();
 	double po2Max();
-	double CCRMax();
 	void emitDataChanged();
 #ifndef SUBSURFACE_MOBILE
 	void calculateDecompression();
@@ -91,6 +93,7 @@ private:
 	struct plot_info pInfo;
 	int diveId;
 	unsigned int dcNr;
+	struct deco_state plot_deco_state;
 };
 
 #endif // DIVEPLOTDATAMODEL_H

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * uemis-downloader.c
  *
@@ -15,6 +16,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -23,6 +25,11 @@
 #include "libdivecomputer.h"
 #include "uemis.h"
 #include "divelist.h"
+#include "divesite.h"
+#include "errorhelper.h"
+#include "file.h"
+#include "tag.h"
+#include "core/subsurface-string.h"
 
 #define ERR_FS_ALMOST_FULL QT_TRANSLATE_NOOP("gettextFromC", "Uemis Zurich: the file system is almost full.\nDisconnect/reconnect the dive computer\nand click \'Retry\'")
 #define ERR_FS_FULL QT_TRANSLATE_NOOP("gettextFromC", "Uemis Zurich: the file system is full.\nDisconnect/reconnect the dive computer\nand click Retry")
@@ -72,8 +79,66 @@ static int mbuf_size = 0;
 static int max_mem_used = -1;
 static int next_table_index = 0;
 static int dive_to_read = 0;
+static uint32_t mindiveid;
 
-static int max_deleted_seen = -1;
+/* Linked list to remember already executed divespot download requests */
+struct divespot_mapping {
+	int divespot_id;
+	struct dive_site *dive_site;
+	struct divespot_mapping *next;
+};
+static struct divespot_mapping *divespot_mapping = NULL;
+
+static void erase_divespot_mapping()
+{
+	struct divespot_mapping *tmp;
+	while (divespot_mapping != NULL) {
+		tmp = divespot_mapping;
+		divespot_mapping = tmp->next;
+		free(tmp);
+	}
+	divespot_mapping = NULL;
+}
+
+static void add_to_divespot_mapping(int divespot_id, struct dive_site *ds)
+{
+	struct divespot_mapping *ndm = (struct divespot_mapping*)calloc(1, sizeof(struct divespot_mapping));
+	struct divespot_mapping **pdm = &divespot_mapping;
+	struct divespot_mapping *cdm = *pdm;
+
+	while (cdm && cdm->next)
+		cdm = cdm->next;
+
+	ndm->divespot_id = divespot_id;
+	ndm->dive_site = ds;
+	ndm->next = NULL;
+	if (cdm)
+		cdm->next = ndm;
+	else
+		cdm = *pdm = ndm;
+}
+
+static bool is_divespot_mappable(int divespot_id)
+{
+	struct divespot_mapping *dm = divespot_mapping;
+	while (dm) {
+		if (dm->divespot_id == divespot_id)
+			return true;
+		dm = dm->next;
+	}
+	return false;
+}
+
+static struct dive_site *get_dive_site_by_divespot_id(int divespot_id)
+{
+	struct divespot_mapping *dm = divespot_mapping;
+	while (dm) {
+		if (dm->divespot_id == divespot_id)
+			return dm->dive_site;
+		dm = dm->next;
+	}
+	return NULL;
+}
 
 /* helper function to parse the Uemis data structures */
 static void uemis_ts(char *buffer, void *_when)
@@ -92,7 +157,7 @@ static void uemis_ts(char *buffer, void *_when)
 /* float minutes */
 static void uemis_duration(char *buffer, duration_t *duration)
 {
-	duration->seconds = rint(ascii_strtod(buffer, NULL) * 60);
+	duration->seconds = lrint(ascii_strtod(buffer, NULL) * 60);
 }
 
 /* int cm */
@@ -111,7 +176,7 @@ static void uemis_add_string(const char *buffer, char **text, const char *delimi
 {
 	/* do nothing if this is an empty buffer (Uemis sometimes returns a single
 	 * space for empty buffers) */
-	if (!buffer || !*buffer || (*buffer == ' ' && *(buffer + 1) == '\0'))
+	if (empty_string(buffer) || (*buffer == ' ' && *(buffer + 1) == '\0'))
 		return;
 	if (!*text) {
 		*text = strdup(buffer);
@@ -129,15 +194,14 @@ static void uemis_add_string(const char *buffer, char **text, const char *delimi
 static void uemis_get_weight(char *buffer, weightsystem_t *weight, int diveid)
 {
 	weight->weight.grams = uemis_get_weight_unit(diveid) ?
-				       lbs_to_grams(ascii_strtod(buffer, NULL)) :
-				       ascii_strtod(buffer, NULL) * 1000;
-	weight->description = strdup(translate("gettextFromC", "unknown"));
+		lbs_to_grams(ascii_strtod(buffer, NULL)) :
+		lrint(ascii_strtod(buffer, NULL) * 1000);
+	weight->description = translate("gettextFromC", "unknown");
 }
 
 static struct dive *uemis_start_dive(uint32_t deviceid)
 {
 	struct dive *dive = alloc_dive();
-	dive->downloaded = true;
 	dive->dc.model = strdup("Uemis Zurich");
 	dive->dc.deviceid = deviceid;
 	return dive;
@@ -150,17 +214,6 @@ static struct dive *get_dive_by_uemis_diveid(device_data_t *devdata, uint32_t ob
 			return devdata->download_table->dives[i];
 	}
 	return NULL;
-}
-
-static void record_uemis_dive(device_data_t *devdata, struct dive *dive)
-{
-	if (devdata->create_new_trip) {
-		if (!devdata->trip)
-			devdata->trip = create_and_hookup_trip_from_dive(dive);
-		else
-			add_dive_to_trip(dive, devdata->trip);
-	}
-	record_dive_to_table(dive, devdata->download_table);
 }
 
 /* send text to the importer progress bar */
@@ -179,13 +232,13 @@ static void uemis_info(const char *fmt, ...)
 
 static long bytes_available(int file)
 {
-	long result;
+	long result, r2;
 	long now = lseek(file, 0, SEEK_CUR);
 	if (now == -1)
 		return 0;
 	result = lseek(file, 0, SEEK_END);
-	lseek(file, now, SEEK_SET);
-	if (now == -1 || result == -1)
+	r2 = lseek(file, now, SEEK_SET);
+	if (now == -1 || result == -1 || r2 == -1)
 		return 0;
 	return result;
 }
@@ -242,7 +295,7 @@ static bool uemis_init(const char *path)
 {
 	char *ans_path;
 	int i;
-
+	erase_divespot_mapping();
 	if (!path)
 		return false;
 	/* let's check if this is indeed a Uemis DC */
@@ -256,7 +309,8 @@ static bool uemis_init(const char *path)
 	}
 	if (bytes_available(reqtxt_file) > 5) {
 		char tmp[6];
-		read(reqtxt_file, tmp, 5);
+		if (read(reqtxt_file, tmp, 5) != 5)
+			return false;
 		tmp[5] = '\0';
 #if UEMIS_DEBUG & 2
 		fprintf(debugfile, "::r req.txt \"%s\"\n", tmp);
@@ -456,6 +510,22 @@ static void uemis_increased_timeout(int *timeout)
 	usleep(*timeout);
 }
 
+static char *build_ans_path(const char *path, int filenumber)
+{
+	char *intermediate, *ans_path, fl[13];
+
+	/* Clamp filenumber into the 0..9999 range. This is never necessary,
+	 * as filenumber can never go above UEMIS_MAX_FILES, but gcc doesn't
+	 * recognize that and produces very noisy warnings. */
+	filenumber = filenumber < 0 ? 0 : filenumber % 10000;
+
+	snprintf(fl, 13, "ANS%d.TXT", filenumber);
+	intermediate = build_filename(path, "ANS");
+	ans_path = build_filename(intermediate, fl);
+	free(intermediate);
+	return ans_path;
+}
+
 /* send a request to the dive computer and collect the answer */
 static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 			     int n_param_out, const char **error_text)
@@ -476,7 +546,7 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 	int timeout = UEMIS_LONG_TIMEOUT;
 
 	reqtxt_file = subsurface_open(reqtxt_path, O_RDWR | O_CREAT, 0666);
-	if (reqtxt_file == -1) {
+	if (reqtxt_file < 0) {
 		*error_text = "can't open req.txt";
 #ifdef UEMIS_DEBUG
 		fprintf(debugfile, "open %s failed with errno %d\n", reqtxt_path, errno);
@@ -492,9 +562,9 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 		answer_in_mbuf = true;
 		str_append_with_delim(sb, "");
 		if (!strcmp(request, "getDivelogs"))
-			what = translate("gettextFromC", "divelog #");
+			what = translate("gettextFromC", "dive log #");
 		else if (!strcmp(request, "getDivespot"))
-			what = translate("gettextFromC", "divespot #");
+			what = translate("gettextFromC", "dive spot #");
 		else if (!strcmp(request, "getDive"))
 			what = translate("gettextFromC", "details for #");
 	}
@@ -523,10 +593,21 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 		if (import_thread_cancelled)
 			return false;
 		progress_bar_fraction = filenr / (double)UEMIS_MAX_FILES;
-		snprintf(fl, 13, "ANS%d.TXT", filenr - 1);
-		ans_path = build_filename(build_filename(path, "ANS"), fl);
+		ans_path = build_ans_path(path, filenr - 1);
 		ans_file = subsurface_open(ans_path, O_RDONLY, 0666);
-		read(ans_file, tmp, 100);
+		if (ans_file < 0) {
+			*error_text = "can't open Uemis response file";
+#ifdef UEMIS_DEBUG
+			fprintf(debugfile, "open %s failed with errno %d\n", ans_path, errno);
+#endif
+			free(ans_path);
+			return false;
+		}
+		if (read(ans_file, tmp, 100) < 0) {
+			free(ans_path);
+			close(ans_file);
+			return false;
+		}
 		close(ans_file);
 #if UEMIS_DEBUG & 8
 		tmp[100] = '\0';
@@ -555,7 +636,7 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 					assembling_mbuf = false;
 				}
 				reqtxt_file = subsurface_open(reqtxt_path, O_RDWR | O_CREAT, 0666);
-				if (reqtxt_file == -1) {
+				if (reqtxt_file < 0) {
 					*error_text = "can't open req.txt";
 					fprintf(stderr, "open %s failed with errno %d\n", reqtxt_path, errno);
 					return false;
@@ -570,7 +651,7 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 				searching = false;
 			}
 			reqtxt_file = subsurface_open(reqtxt_path, O_RDWR | O_CREAT, 0666);
-			if (reqtxt_file == -1) {
+			if (reqtxt_file < 0) {
 				*error_text = "can't open req.txt";
 				fprintf(stderr, "open %s failed with errno %d\n", reqtxt_path, errno);
 				return false;
@@ -580,9 +661,16 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 		}
 		if (ismulti && more_files && tmp[0] == '1') {
 			int size;
-			snprintf(fl, 13, "ANS%d.TXT", assembling_mbuf ? filenr - 2 : filenr - 1);
-			ans_path = build_filename(build_filename(path, "ANS"), fl);
+			ans_path = build_ans_path(path, assembling_mbuf ? filenr - 2 : filenr - 1);
 			ans_file = subsurface_open(ans_path, O_RDONLY, 0666);
+			if (ans_file < 0) {
+				*error_text = "can't open Uemis response file";
+#ifdef UEMIS_DEBUG
+				fprintf(debugfile, "open %s failed with errno %d\n", ans_path, errno);
+#endif
+				free(ans_path);
+				return false;
+			}
 			free(ans_path);
 			size = bytes_available(ans_file);
 			if (size > 3) {
@@ -611,10 +699,17 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 		char *buf = NULL;
 
 		if (!ismulti) {
-			snprintf(fl, 13, "ANS%d.TXT", filenr - 1);
-			ans_path = build_filename(build_filename(path, "ANS"), fl);
+			ans_path = build_ans_path(path, filenr - 1);
 			ans_file = subsurface_open(ans_path, O_RDONLY, 0666);
-			free(ans_path);
+			if (ans_file < 0) {
+				*error_text = "can't open Uemis response file";
+#ifdef UEMIS_DEBUG
+				fprintf(debugfile, "open %s failed with errno %d\n", ans_path, errno);
+#endif
+				free(ans_path);
+				return false;
+			}
+
 			size = bytes_available(ans_file);
 			if (size > 3) {
 				int r;
@@ -629,10 +724,11 @@ static bool uemis_get_answer(const char *path, char *request, int n_param_in,
 				buffer_add(&mbuf, &mbuf_size, buf);
 				show_progress(buf, what);
 #if UEMIS_DEBUG & 8
-				fprintf(debugfile, "::r %s \"%s\"\n", fl, buf);
+				fprintf(debugfile, "::r %s \"%s\"\n", ans_path, buf);
 #endif
 			}
 			size -= 3;
+			free(ans_path);
 			close(ans_file);
 		} else {
 			ismulti = false;
@@ -722,7 +818,9 @@ static void parse_tag(struct dive *dive, char *tag, char *val)
 	} else if (!strcmp(tag, "altitude")) {
 		uemis_get_index(val, &dive->dc.surface_pressure.mbar);
 	} else if (!strcmp(tag, "f32Weight")) {
-		uemis_get_weight(val, &dive->weightsystem[0], dive->dc.diveid);
+		weightsystem_t ws;
+		uemis_get_weight(val, &ws, dive->dc.diveid);
+		add_cloned_weightsystem(&dive->weightsystems, ws);
 	} else if (!strcmp(tag, "notes")) {
 		uemis_add_string(val, &dive->notes, " ");
 	} else if (!strcmp(tag, "u8DiveSuit")) {
@@ -757,8 +855,6 @@ static bool uemis_delete_dive(device_data_t *devdata, uint32_t diveid)
 	}
 	if (dive) {
 		devdata->download_table->dives[--devdata->download_table->nr] = NULL;
-		if (dive->tripflag != TF_NONE)
-			remove_dive_from_trip(dive, false);
 
 		free(dive->dc.sample);
 		free((void *)dive->notes);
@@ -773,17 +869,17 @@ static bool uemis_delete_dive(device_data_t *devdata, uint32_t diveid)
 	return false;
 }
 
-/* This function is called for both divelog and dive information that we get
- * from the SDA (what an insane design, btw). The object_id in the divelog
+/* This function is called for both dive log and dive information that we get
+ * from the SDA (what an insane design, btw). The object_id in the dive log
  * matches the logfilenr in the dive information (which has its own, often
  * different object_id) - we use this as the diveid.
- * We create the dive when parsing the divelog and then later, when we parse
+ * We create the dive when parsing the dive log and then later, when we parse
  * the dive information we locate the already created dive via its diveid.
  * Most things just get parsed and converted into our internal data structures,
  * but the dive location API is even more crazy. We just get an id that is an
  * index into yet another data store that we read out later. In order to
  * correctly populate the location and gps data from that we need to remember
- * the addresses of those fields for every dive that references the divespot. */
+ * the addresses of those fields for every dive that references the dive spot. */
 static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *inbuf, char **max_divenr, int *for_dive)
 {
 	char *buf = strdup(inbuf);
@@ -805,7 +901,7 @@ static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *
 	bp = buf + 1;
 	tp = next_token(&bp);
 	if (strcmp(tp, "divelog") == 0) {
-		/* this is a divelog */
+		/* this is a dive log */
 		is_log = true;
 		tp = next_token(&bp);
 		/* is it a valid entry or nothing ? */
@@ -879,7 +975,7 @@ static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *
 #if UEMIS_DEBUG & 4
 			fprintf(debugfile, "Expect to find section %s\n", sections[nr_sections]);
 #endif
-			if (nr_sections < sizeof(sections) - 1)
+			if (nr_sections < sizeof(sections) / sizeof(*sections) - 1)
 				nr_sections++;
 			continue;
 		}
@@ -905,11 +1001,13 @@ static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *
 		} else if (!is_log && dive && !strcmp(tag, "divespot_id")) {
 			int divespot_id = atoi(val);
 			if (divespot_id != -1) {
-				dive->dive_site_uuid = create_dive_site("from Uemis", dive->when);
-				uemis_mark_divelocation(dive->dc.diveid, divespot_id, dive->dive_site_uuid);
+				struct dive_site *ds = create_dive_site("from Uemis", devdata->sites);
+				unregister_dive_from_dive_site(dive);
+				add_dive_to_dive_site(dive, ds);
+				uemis_mark_divelocation(dive->dc.diveid, divespot_id, ds);
 			}
 #if UEMIS_DEBUG & 2
-			fprintf(debugfile, "Created divesite %d for diveid : %d\n", dive->dive_site_uuid, dive->dc.diveid);
+			fprintf(debugfile, "Created divesite %d for diveid : %d\n", dive->dive_site->uuid, dive->dc.diveid);
 #endif
 		} else if (dive) {
 			parse_tag(dive, tag, val);
@@ -922,15 +1020,13 @@ static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *
 		 * be a short read because of some error */
 		if (done && ++bp < endptr && *bp != '{' && strstr(bp, "{{")) {
 			done = false;
-			record_uemis_dive(devdata, dive);
-			mark_divelist_changed(true);
+			record_dive_to_table(dive, devdata->download_table);
 			dive = uemis_start_dive(deviceid);
 		}
 	}
 	if (is_log) {
 		if (dive->dc.diveid) {
-			record_uemis_dive(devdata, dive);
-			mark_divelist_changed(true);
+			record_dive_to_table(dive, devdata->download_table);
 		} else { /* partial dive */
 			free(dive);
 			free(buf);
@@ -941,13 +1037,13 @@ static bool process_raw_buffer(device_data_t *devdata, uint32_t deviceid, char *
 	return true;
 }
 
-static char *uemis_get_divenr(char *deviceidstr, int force)
+static char *uemis_get_divenr(char *deviceidstr, struct dive_table *table, int force)
 {
 	uint32_t deviceid, maxdiveid = 0;
 	int i;
 	char divenr[10];
-	struct dive_table *table;
 	deviceid = atoi(deviceidstr);
+	mindiveid = 0xFFFFFFFF;
 
 	/*
 	 * If we are are retrying after a disconnect/reconnect, we
@@ -955,11 +1051,11 @@ static char *uemis_get_divenr(char *deviceidstr, int force)
 	 * already have.
 	 *
 	 * Also, if "force_download" is true, do this even if we
-	 * don't have any dives (maxdiveid will remain zero)
+	 * don't have any dives (maxdiveid will remain ~0).
+	 *
+	 * Otherwise, use the global dive table.
 	 */
-	if (force || downloadTable.nr)
-		table = &downloadTable;
-	else
+	if (!force && !table->nr)
 		table = &dive_table;
 
 	for (i = 0; i < table->nr; i++) {
@@ -969,16 +1065,13 @@ static char *uemis_get_divenr(char *deviceidstr, int force)
 			continue;
 		for_each_dc (d, dc) {
 			if (dc->model && !strcmp(dc->model, "Uemis Zurich") &&
-			    (dc->deviceid == 0 || dc->deviceid == 0x7fffffff || dc->deviceid == deviceid) &&
-			    dc->diveid > maxdiveid)
-				maxdiveid = dc->diveid;
+			    (dc->deviceid == 0 || dc->deviceid == 0x7fffffff || dc->deviceid == deviceid)) {
+				if (dc->diveid > maxdiveid)
+					maxdiveid = dc->diveid;
+				if (dc->diveid < mindiveid)
+					mindiveid = dc->diveid;
+			}
 		}
-	}
-	if (max_deleted_seen >= 0 && maxdiveid < (uint32_t)max_deleted_seen) {
-		maxdiveid = max_deleted_seen;
-#if UEMIS_DEBUG & 4
-		fprintf(debugfile, "overriding max seen with max deleted seen %d\n", max_deleted_seen);
-#endif
 	}
 	snprintf(divenr, 10, "%d", maxdiveid);
 	return strdup(divenr);
@@ -991,6 +1084,7 @@ static bool do_dump_buffer_to_file(char *buf, char *prefix)
 	char path[100];
 	char date[40];
 	char obid[40];
+	bool success;
 	if (!buf)
 		return false;
 
@@ -1015,10 +1109,10 @@ static bool do_dump_buffer_to_file(char *buf, char *prefix)
 	int dumpFile = subsurface_open(path, O_RDWR | O_CREAT, 0666);
 	if (dumpFile == -1)
 		return false;
-	write(dumpFile, buf, strlen(buf));
+	success = write(dumpFile, buf, strlen(buf)) == strlen(buf);
 	close(dumpFile);
 	bufCnt++;
-	return true;
+	return success;
 }
 #endif
 
@@ -1061,17 +1155,17 @@ static int get_memory(struct dive_table *td, int checkpoint)
 	return UEMIS_MEM_OK;
 }
 
-/* mark a dive as deleted by setting download to false
- * this will be picked up by some cleaning statement later */
+/* we misuse the hidden_by_filter flag to mark a dive as deleted.
+ * this will be picked up by some cleaning statement later. */
 static void do_delete_dives(struct dive_table *td, int idx)
 {
 	for (int x = idx; x < td->nr; x++)
-		td->dives[x]->downloaded = false;
+		td->dives[x]->hidden_by_filter = true;
 }
 
 static bool load_uemis_divespot(const char *mountpath, int divespot_id)
 {
-	char divespotnr[10];
+	char divespotnr[32];
 	snprintf(divespotnr, sizeof(divespotnr), "%d", divespot_id);
 	param_buff[2] = divespotnr;
 #if UEMIS_DEBUG & 2
@@ -1087,37 +1181,44 @@ static bool load_uemis_divespot(const char *mountpath, int divespot_id)
 	return false;
 }
 
-static void get_uemis_divespot(const char *mountpath, int divespot_id, struct dive *dive)
+static void get_uemis_divespot(device_data_t *devdata, const char *mountpath, int divespot_id, struct dive *dive)
 {
-	struct dive_site *nds = get_dive_site_by_uuid(dive->dive_site_uuid);
-	if (nds && nds->name && strstr(nds->name,"from Uemis")) {
+	struct dive_site *nds = dive->dive_site;
+
+	if (is_divespot_mappable(divespot_id)) {
+		struct dive_site *ds = get_dive_site_by_divespot_id(divespot_id);
+		unregister_dive_from_dive_site(dive);
+		add_dive_to_dive_site(dive, ds);
+	} else if (nds && nds->name && strstr(nds->name,"from Uemis")) {
 		if (load_uemis_divespot(mountpath, divespot_id)) {
 			/* get the divesite based on the diveid, this should give us
 			* the newly created site
 			*/
-			struct dive_site *ods = NULL;
+			struct dive_site *ods;
 			/* with the divesite name we got from parse_dive, that is called on load_uemis_divespot
 			 * we search all existing divesites if we have one with the same name already. The function
 			 * returns the first found which is luckily not the newly created.
 			 */
-			(void)get_dive_site_uuid_by_name(nds->name, &ods);
+			ods = get_dive_site_by_name(nds->name, devdata->sites);
 			if (ods) {
 				/* if the uuid's are the same, the new site is a duplicate and can be deleted */
 				if (nds->uuid != ods->uuid) {
-					delete_dive_site(nds->uuid);
-					dive->dive_site_uuid = ods->uuid;
+					delete_dive_site(nds, devdata->sites);
+					unregister_dive_from_dive_site(dive);
+					add_dive_to_dive_site(dive, ods);
 				}
 			}
+			add_to_divespot_mapping(divespot_id, dive->dive_site);
 		} else {
 			/* if we can't load the dive site details, delete the site we
 			* created in process_raw_buffer
 			*/
-			delete_dive_site(dive->dive_site_uuid);
+			delete_dive_site(dive->dive_site, devdata->sites);
 		}
 	}
 }
 
-static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, struct device_data_t *data, const char *mountpath, const char deviceidnr)
+static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, device_data_t *data, const char *mountpath, const char deviceidnr)
 {
 	struct dive *dive = data->download_table->dives[idx];
 	char log_file_no_to_find[20];
@@ -1126,10 +1227,11 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 	bool found_below = false;
 	bool found_above = false;
 	int deleted_files = 0;
+	int fail_count = 0;
 
 	snprintf(log_file_no_to_find, sizeof(log_file_no_to_find), "logfilenr{int{%d", dive->dc.diveid);
 #if UEMIS_DEBUG & 2
-	fprintf(debugfile, "Looking for dive details to go with divelog id %d\n", dive->dc.diveid);
+	fprintf(debugfile, "Looking for dive details to go with dive log id %d\n", dive->dc.diveid);
 #endif
 	while (!found) {
 		if (import_thread_cancelled)
@@ -1142,15 +1244,15 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 #endif
 		*uemis_mem_status = get_memory(data->download_table, UEMIS_CHECK_SINGLE_DIVE);
 		if (*uemis_mem_status == UEMIS_MEM_OK) {
-			/* if the memory isn's completely full we can try to read more divelog vs. dive details
+			/* if the memory isn's completely full we can try to read more dive log vs. dive details
 			 * UEMIS_MEM_CRITICAL means not enough space for a full round but the dive details
-			 * and the divespots should fit into the UEMIS memory
+			 * and the dive spots should fit into the UEMIS memory
 			 * The match we do here is to map the object_id to the logfilenr, we do this
-			 * by iterating through the last set of loaded divelogs and then find the corresponding
+			 * by iterating through the last set of loaded dive logs and then find the corresponding
 			 * dive with the matching logfilenr */
 			if (mbuf) {
 				if (strstr(mbuf, log_file_no_to_find)) {
-					/* we found the logfilenr that matches our object_id from the divelog we were looking for
+					/* we found the logfilenr that matches our object_id from the dive log we were looking for
 					 * we mark the search successful even if the dive has been deleted. */
 					found = true;
 					if (strstr(mbuf, "deleted{bool{true") == NULL) {
@@ -1160,22 +1262,21 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 						 * UEMIS unfortunately deletes dives by deleting the dive details and not the logs. */
 #if UEMIS_DEBUG & 2
 						d_time = get_dive_date_c_string(dive->when);
-						fprintf(debugfile, "Matching divelog id %d from %s with dive details %d\n", dive->dc.diveid, d_time, dive_to_read);
+						fprintf(debugfile, "Matching dive log id %d from %s with dive details %d\n", dive->dc.diveid, d_time, dive_to_read);
 #endif
 						int divespot_id = uemis_get_divespot_id_by_diveid(dive->dc.diveid);
 						if (divespot_id >= 0)
-							get_uemis_divespot(mountpath, divespot_id, dive);
+							get_uemis_divespot(data, mountpath, divespot_id, dive);
 
 					} else {
 						/* in this case we found a deleted file, so let's increment */
 #if UEMIS_DEBUG & 2
 						d_time = get_dive_date_c_string(dive->when);
-						fprintf(debugfile, "TRY matching divelog id %d from %s with dive details %d but details are deleted\n", dive->dc.diveid, d_time, dive_to_read);
+						fprintf(debugfile, "TRY matching dive log id %d from %s with dive details %d but details are deleted\n", dive->dc.diveid, d_time, dive_to_read);
 #endif
 						deleted_files++;
-						max_deleted_seen = dive_to_read;
 						/* mark this log entry as deleted and cleanup later, otherwise we mess up our array */
-						dive->downloaded = false;
+						dive->hidden_by_filter = true;
 #if UEMIS_DEBUG & 2
 						fprintf(debugfile, "Deleted dive from %s, with id %d from table -- newmax is %s\n", d_time, dive->dc.diveid, newmax);
 #endif
@@ -1183,7 +1284,7 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 				} else {
 					uint32_t nr_found = 0;
 					char *logfilenr = strstr(mbuf, "logfilenr");
-					if (logfilenr) {
+					if (logfilenr && strstr(mbuf, "act{")) {
 						sscanf(logfilenr, "logfilenr{int{%u", &nr_found);
 						if (nr_found >= dive->dc.diveid || nr_found == 0) {
 							found_above = true;
@@ -1193,6 +1294,10 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 						}
 						if (dive_to_read < -1)
 							dive_to_read = -1;
+					} else if (!strstr(mbuf, "act{") && ++fail_count == 10) {
+						if (verbose)
+							fprintf(stderr, "Uemis downloader: Cannot access dive details - searching from start\n");
+						dive_to_read = -1;
 					}
 				}
 			}
@@ -1200,7 +1305,7 @@ static bool get_matching_dive(int idx, char *newmax, int *uemis_mem_status, stru
 				break;
 			dive_to_read++;
 		} else {
-			/* At this point the memory of the UEMIS is full, let's cleanup all divelog files were
+			/* At this point the memory of the UEMIS is full, let's cleanup all dive log files were
 			 * we could not match the details to. */
 			do_delete_dives(data->download_table, idx);
 			return false;
@@ -1255,12 +1360,12 @@ const char *do_uemis_import(device_data_t *data)
 		goto bail;
 
 	param_buff[1] = "notempty";
-	newmax = uemis_get_divenr(deviceid, force_download);
+	newmax = uemis_get_divenr(deviceid, data->download_table, force_download);
 	if (verbose)
-		fprintf(stderr, "Uemis downloader: start looking at dive nr %s", newmax);
+		fprintf(stderr, "Uemis downloader: start looking at dive nr %s\n", newmax);
 
 	first = start = atoi(newmax);
-	dive_to_read = first;
+	dive_to_read = mindiveid < first ? first - mindiveid : first;
 	for (;;) {
 #if UEMIS_DEBUG & 2
 		debug_round++;
@@ -1281,7 +1386,7 @@ const char *do_uemis_import(device_data_t *data)
 			realmbuf = strchr(mbuf, '{');
 		if (success && realmbuf && uemis_mem_status != UEMIS_MEM_FULL) {
 #if UEMIS_DEBUG & 16
-			do_dump_buffer_to_file(realmbuf, "Divelogs");
+			do_dump_buffer_to_file(realmbuf, "Dive logs");
 #endif
 			/* process the buffer we have assembled */
 			if (!process_raw_buffer(data, deviceidnr, realmbuf, &newmax, NULL)) {
@@ -1307,7 +1412,7 @@ const char *do_uemis_import(device_data_t *data)
 			fprintf(debugfile, "d_u_i after download and parse start %d end %d newmax %s progress %4.2f\n", start, end, newmax, progress_bar_fraction);
 #endif
 			/* The way this works is that I am reading the current dive from what has been loaded during the getDiveLogs call to the UEMIS.
-			 * As the object_id of the divelog entry and the object_id of the dive details are not necessarily the same, the match needs
+			 * As the object_id of the dive log entry and the object_id of the dive details are not necessarily the same, the match needs
 			 * to happen based on the logfilenr.
 			 * What the following part does is to optimize the mapping by using
 			 * dive_to_read = the dive details entry that need to be read using the object_id
@@ -1352,9 +1457,9 @@ const char *do_uemis_import(device_data_t *data)
 				}
 #endif
 		} else {
-			/* some of the loading from the UEMIS failed at the divelog level
-			 * if the memory status = full, we can't even load the divespots and/or buddies.
-			 * The loaded block of divelogs is useless and all new loaded divelogs need to
+			/* some of the loading from the UEMIS failed at the dive log level
+			 * if the memory status = full, we can't even load the dive spots and/or buddies.
+			 * The loaded block of dive logs is useless and all new loaded dive logs need to
 			 * be deleted from the download_table.
 			 */
 			if (uemis_mem_status == UEMIS_MEM_FULL)
@@ -1377,7 +1482,7 @@ const char *do_uemis_import(device_data_t *data)
 	 * to see if we have to clean some dead bodies from our download table */
 	next_table_index = 0;
 	while (next_table_index < data->download_table->nr) {
-		if (!data->download_table->dives[next_table_index]->downloaded)
+		if (data->download_table->dives[next_table_index]->hidden_by_filter)
 			uemis_delete_dive(data, data->download_table->dives[next_table_index]->dc.diveid);
 		else
 			next_table_index++;

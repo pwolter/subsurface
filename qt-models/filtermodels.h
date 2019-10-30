@@ -1,109 +1,100 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef FILTERMODELS_H
 #define FILTERMODELS_H
 
+#include "divetripmodel.h"
+
 #include <QStringListModel>
 #include <QSortFilterProxyModel>
+#include <QDateTime>
+
 #include <stdint.h>
+#include <vector>
 
-class MultiFilterInterface {
-public:
-	MultiFilterInterface() : checkState(NULL), anyChecked(false) {}
-	virtual bool doFilter(struct dive *d, QModelIndex &index0, QAbstractItemModel *sourceModel) const = 0;
-	virtual void clearFilter() = 0;
-	bool *checkState;
-	bool anyChecked;
-};
+struct dive;
+struct dive_trip;
 
-class TagFilterModel : public QStringListModel, public MultiFilterInterface {
-	Q_OBJECT
-public:
-	static TagFilterModel *instance();
-	virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	virtual bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-	virtual Qt::ItemFlags flags(const QModelIndex &index) const;
-	bool doFilter(struct dive *d, QModelIndex &index0, QAbstractItemModel *sourceModel) const;
-	void clearFilter();
-public
-slots:
-	void repopulate();
+struct FilterData {
+	// The mode ids are chosen such that they can be directly converted from / to combobox indices.
+	enum class Mode {
+		ALL_OF = 0,
+		ANY_OF = 1,
+		NONE_OF = 2
+	};
 
-private:
-	explicit TagFilterModel(QObject *parent = 0);
-};
-
-class BuddyFilterModel : public QStringListModel, public MultiFilterInterface {
-	Q_OBJECT
-public:
-	static BuddyFilterModel *instance();
-	virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	virtual bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-	virtual Qt::ItemFlags flags(const QModelIndex &index) const;
-	bool doFilter(struct dive *d, QModelIndex &index0, QAbstractItemModel *sourceModel) const;
-	void clearFilter();
-public
-slots:
-	void repopulate();
-
-private:
-	explicit BuddyFilterModel(QObject *parent = 0);
-};
-
-class LocationFilterModel : public QStringListModel, public MultiFilterInterface {
-	Q_OBJECT
-public:
-	static LocationFilterModel *instance();
-	virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	virtual bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-	virtual Qt::ItemFlags flags(const QModelIndex &index) const;
-	bool doFilter(struct dive *d, QModelIndex &index0, QAbstractItemModel *sourceModel) const;
-	void clearFilter();
-public
-slots:
-	void repopulate();
-
-private:
-	explicit LocationFilterModel(QObject *parent = 0);
-};
-
-class SuitsFilterModel : public QStringListModel, public MultiFilterInterface {
-	Q_OBJECT
-public:
-	static SuitsFilterModel *instance();
-	virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-	virtual bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-	virtual Qt::ItemFlags flags(const QModelIndex &index) const;
-	bool doFilter(struct dive *d, QModelIndex &index0, QAbstractItemModel *sourceModel) const;
-	void clearFilter();
-public
-slots:
-	void repopulate();
-
-private:
-	explicit SuitsFilterModel(QObject *parent = 0);
+	bool validFilter = false;
+	int minVisibility = 0;
+	int maxVisibility = 5;
+	int minRating = 0;
+	int maxRating = 5;
+	// The default minimum and maximum temperatures are set such that all
+	// physically reasonable dives are shown. Note that these values should
+	// work for both Celcius and Fahrenheit scales.
+	double minWaterTemp = -10;
+	double maxWaterTemp = 200;
+	double minAirTemp = -50;
+	double maxAirTemp = 200;
+	QDateTime fromDate = QDateTime(QDate(1980,1,1));
+	QTime fromTime = QTime(0,0);
+	QDateTime toDate = QDateTime::currentDateTime();
+	QTime toTime = QTime::currentTime();
+	QStringList tags;
+	QStringList people;
+	QStringList location;
+	QStringList suit;
+	QStringList dnotes;
+	QStringList equipment;
+	Mode tagsMode = Mode::ALL_OF;
+	Mode peopleMode = Mode::ALL_OF;
+	Mode locationMode = Mode::ANY_OF;
+	Mode dnotesMode = Mode::ALL_OF;
+	Mode suitMode = Mode::ANY_OF;
+	Mode equipmentMode = Mode::ALL_OF;
+	bool logged = true;
+	bool planned = true;
 };
 
 class MultiFilterSortModel : public QSortFilterProxyModel {
 	Q_OBJECT
 public:
 	static MultiFilterSortModel *instance();
-	virtual bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const;
-	void addFilterModel(MultiFilterInterface *model);
-	void removeFilterModel(MultiFilterInterface *model);
+	bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override;
+	bool showDive(const struct dive *d) const;
+	bool updateDive(struct dive *d); // returns true if visibility status changed
 	int divesDisplayed;
+	bool lessThan(const QModelIndex &, const QModelIndex &) const override;
+	bool diveSiteMode() const; // returns true if we're filtering on dive site
+	const QVector<dive_site *> &filteredDiveSites() const;
 public
 slots:
 	void myInvalidate();
 	void clearFilter();
-	void startFilterDiveSite(uint32_t uuid);
-	void stopFilterDiveSite();
+	void startFilterDiveSites(QVector<dive_site *> ds);
+	void setFilterDiveSite(QVector<dive_site *> ds);
+	void stopFilterDiveSites();
+	void filterChanged(const QModelIndex &from, const QModelIndex &to, const QVector<int> &roles);
+	void resetModel(DiveTripModelBase::Layout layout);
+	void filterDataChanged(const FilterData &data);
+	void divesAdded(struct dive_trip *, bool, const QVector<dive *> &dives);
+	void divesDeleted(struct dive_trip *, bool, const QVector<dive *> &dives);
 
 signals:
 	void filterFinished();
+
 private:
 	MultiFilterSortModel(QObject *parent = 0);
-	QList<MultiFilterInterface *> models;
-	bool justCleared;
-	struct dive_site *curr_dive_site;
+	// Dive site filtering has priority over other filters
+	QVector<dive_site *> dive_sites;
+	void countsChanged();
+	FilterData filterData;
+
+	// We use ref-counting for the dive site mode. The reason is that when switching
+	// between two tabs that both need dive site mode, the following course of
+	// events may happen:
+	//	1) The new tab appears -> enter dive site mode.
+	//	2) The old tab gets its hide() signal -> exit dive site mode.
+	// The filter is now not in dive site mode, even if it should
+	int diveSiteRefCount;
 };
 
 #endif

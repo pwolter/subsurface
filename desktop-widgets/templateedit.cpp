@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "templateedit.h"
 #include "printoptions.h"
 #include "printer.h"
 #include "ui_templateedit.h"
 
 #include <QMessageBox>
+#include <QButtonGroup>
 #include <QColorDialog>
 
 TemplateEdit::TemplateEdit(QWidget *parent, struct print_options *printOptions, struct template_options *templateOptions) :
@@ -17,9 +19,10 @@ TemplateEdit::TemplateEdit(QWidget *parent, struct print_options *printOptions, 
 
 	// restore the settings and init the UI
 	ui->fontSelection->setCurrentIndex(templateOptions->font_index);
-	ui->fontsize->setValue(templateOptions->font_size);
+	ui->fontsize->setValue(lrint(templateOptions->font_size));
 	ui->colorpalette->setCurrentIndex(templateOptions->color_palette_index);
 	ui->linespacing->setValue(templateOptions->line_spacing);
+	ui->borderwidth->setValue(templateOptions->border_width);
 
 	grantlee_template = TemplateLayout::readTemplate(printOptions->p_template);
 	if (printOptions->type == print_options::DIVELIST)
@@ -97,6 +100,12 @@ void TemplateEdit::on_linespacing_valueChanged(double line_spacing)
 	updatePreview();
 }
 
+void TemplateEdit::on_borderwidth_valueChanged(double border_width)
+{
+	newTemplateOptions.border_width = (int)border_width;
+	updatePreview();
+}
+
 void TemplateEdit::on_fontSelection_currentIndexChanged(int index)
 {
 	newTemplateOptions.font_index = index;
@@ -138,7 +147,7 @@ void TemplateEdit::saveSettings()
 		msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Cancel);
 		msgBox.setDefaultButton(QMessageBox::Cancel);
 		if (msgBox.exec() == QMessageBox::Save) {
-			memcpy(templateOptions, &newTemplateOptions, sizeof(struct template_options));
+			*templateOptions = newTemplateOptions;
 			if (templateChanged) {
 				TemplateLayout::writeTemplate(printOptions->p_template, ui->plainTextEdit->toPlainText());
 				if (printOptions->type == print_options::DIVELIST)

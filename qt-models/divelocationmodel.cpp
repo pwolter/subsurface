@@ -1,14 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "core/units.h"
 #include "qt-models/divelocationmodel.h"
-#include "core/dive.h"
-#include <QDebug>
+#include "core/subsurface-qt/DiveListNotifier.h"
+#include "core/qthelper.h"
+#include "core/divesite.h"
+#include "core/metrics.h"
+#ifndef SUBSURFACE_MOBILE
+#include "cleanertablemodel.h" // for trashIcon() and editIcon()
+#include "desktop-widgets/mainwindow.h" // to place message box
+#include "desktop-widgets/command.h"
+#include <QMessageBox>
+#endif
 #include <QLineEdit>
 #include <QIcon>
-
-bool dive_site_less_than(dive_site *a, dive_site *b)
-{
-	return QString(a->name) <= QString(b->name);
-}
+#include <core/gettextfromc.h>
 
 LocationInformationModel *LocationInformationModel::instance()
 {
@@ -16,34 +21,103 @@ LocationInformationModel *LocationInformationModel::instance()
 	return self;
 }
 
-LocationInformationModel::LocationInformationModel(QObject *obj) : QAbstractTableModel(obj),
-	internalRowCount(0),
-	textField(NULL)
+LocationInformationModel::LocationInformationModel(QObject *obj) : QAbstractTableModel(obj)
 {
+	connect(&diveListNotifier, &DiveListNotifier::diveSiteDiveCountChanged, this, &LocationInformationModel::diveSiteDiveCountChanged);
+	connect(&diveListNotifier, &DiveListNotifier::diveSiteAdded, this, &LocationInformationModel::diveSiteAdded);
+	connect(&diveListNotifier, &DiveListNotifier::diveSiteDeleted, this, &LocationInformationModel::diveSiteDeleted);
+	connect(&diveListNotifier, &DiveListNotifier::diveSiteChanged, this, &LocationInformationModel::diveSiteChanged);
+	connect(&diveListNotifier, &DiveListNotifier::diveSiteDivesChanged, this, &LocationInformationModel::diveSiteDivesChanged);
 }
 
-int LocationInformationModel::columnCount(const QModelIndex &parent) const
+int LocationInformationModel::columnCount(const QModelIndex &) const
 {
-	Q_UNUSED(parent);
 	return COLUMNS;
 }
 
-int LocationInformationModel::rowCount(const QModelIndex &parent) const
+int LocationInformationModel::rowCount(const QModelIndex &) const
 {
-	Q_UNUSED(parent);
-	return internalRowCount + 2;
+	return dive_site_table.nr;
 }
 
-static struct dive_site *get_dive_site_name_start_which_str(const QString& str) {
-	struct dive_site *ds;
-	int i;
-	for_each_dive_site(i,ds) {
-		QString dsName(ds->name);
-		if (dsName.startsWith(str)) {
-			return ds;
+QVariant LocationInformationModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+	if (orientation == Qt::Vertical)
+		return QVariant();
+
+	switch (role) {
+	case Qt::TextAlignmentRole:
+		return int(Qt::AlignLeft | Qt::AlignVCenter);
+	case Qt::FontRole:
+		return defaultModelFont();
+	case Qt::InitialSortOrderRole:
+		// By default, sort number of dives descending, everything else ascending.
+		return section == NUM_DIVES ? Qt::DescendingOrder : Qt::AscendingOrder;
+	case Qt::DisplayRole:
+	case Qt::ToolTipRole:
+		switch (section) {
+		case NAME:
+			return tr("Name");
+		case DESCRIPTION:
+			return tr("Description");
+		case NUM_DIVES:
+			return tr("# of dives");
 		}
+		break;
 	}
-	return NULL;
+
+	return QVariant();
+}
+
+Qt::ItemFlags LocationInformationModel::flags(const QModelIndex &index) const
+{
+	switch (index.column()) {
+	case REMOVE:
+		return Qt::ItemIsEnabled;
+	case NAME:
+	case DESCRIPTION:
+		return QAbstractItemModel::flags(index) | Qt::ItemIsEditable;
+	}
+	return QAbstractItemModel::flags(index);
+}
+
+QVariant LocationInformationModel::getDiveSiteData(const struct dive_site *ds, int column, int role)
+{
+	if (!ds)
+		return QVariant();
+
+	switch(role) {
+	case Qt::EditRole:
+	case Qt::DisplayRole:
+		switch(column) {
+		case DIVESITE: return QVariant::fromValue<dive_site *>((dive_site *)ds); // Not nice: casting away const
+		case NAME: return ds->name;
+		case NUM_DIVES: return ds->dives.nr;
+		case LOCATION: return "TODO";
+		case DESCRIPTION: return ds->description;
+		case NOTES: return ds->name;
+		case TAXONOMY: return "TODO";
+		}
+	break;
+	case Qt::ToolTipRole:
+		switch(column) {
+		case EDIT: return tr("Click here to edit the divesite.");
+		case REMOVE: return tr("Clicking here will remove this divesite.");
+		}
+	break;
+	case Qt::DecorationRole:
+		switch(column) {
+#ifndef SUBSURFACE_MOBILE
+		case EDIT: return editIcon();
+		case REMOVE: return trashIcon();
+#endif
+		case NAME: return dive_site_has_gps_location(ds) ? QIcon(":geotag-icon") : QVariant();
+		}
+	break;
+	case DIVESITE_ROLE:
+		return QVariant::fromValue<dive_site *>((dive_site *)ds); // Not nice: casting away const
+	}
+	return QVariant();
 }
 
 QVariant LocationInformationModel::data(const QModelIndex &index, int role) const
@@ -51,130 +125,174 @@ QVariant LocationInformationModel::data(const QModelIndex &index, int role) cons
 	if (!index.isValid())
 		return QVariant();
 
-	// Special case to handle the 'create dive site' with name.
-	if (index.row() < 2) {
-		if (index.column() == UUID)
-			return RECENTLY_ADDED_DIVESITE;
-		switch(role) {
-			case Qt::DisplayRole : {
-				if (index.row() == 1) {
-					struct dive_site *ds = get_dive_site_name_start_which_str(textField->text());
-					if(ds)
-						return ds->name;
-				}
-				return textField->text();
-			}
-			case Qt::ToolTipRole : {
-				return QString(tr("Create dive site with this name"));
-			}
-			case Qt::EditRole : {
-				if (index.row() == 1) {
-					struct dive_site *ds = get_dive_site_name_start_which_str(textField->text());
-					if (!ds)
-						return INVALID_DIVE_SITE_NAME;
-					if (QString(ds->name) == textField->text())
-						return INVALID_DIVE_SITE_NAME;
-
-				}
-				return textField->text();
-			}
-			case Qt::DecorationRole : return QIcon(":plus");
-		}
-	}
-
-	// The dive sites are -2 because of the first two items.
-	struct dive_site *ds = get_dive_site(index.row() - 2);
-
-	if (!ds)
-		return QVariant();
-
-	switch(role) {
-	case Qt::EditRole:
-	case Qt::DisplayRole :
-		switch(index.column()) {
-		case UUID: return ds->uuid;
-		case NAME: return ds->name;
-		case LATITUDE: return ds->latitude.udeg;
-		case LONGITUDE: return ds->longitude.udeg;
-		case COORDS: return "TODO";
-		case DESCRIPTION: return ds->description;
-		case NOTES: return ds->name;
-		case TAXONOMY_1: return "TODO";
-		case TAXONOMY_2: return "TODO";
-		case TAXONOMY_3: return "TODO";
-		}
-	break;
-	case Qt::DecorationRole : {
-		if (dive_site_has_gps_location(ds))
-			return QIcon(":geocode");
-		else
-			return QVariant();
-	}
-	case UUID_ROLE:
-		return ds->uuid;
-	}
-	return QVariant();
-}
-
-void LocationInformationModel::setFirstRowTextField(QLineEdit *t)
-{
-	textField = t;
+	struct dive_site *ds = get_dive_site(index.row(), &dive_site_table);
+	return getDiveSiteData(ds, index.column(), role);
 }
 
 void LocationInformationModel::update()
 {
 	beginResetModel();
-	internalRowCount = dive_site_table.nr;
-	qSort(dive_site_table.dive_sites, dive_site_table.dive_sites + dive_site_table.nr, dive_site_less_than);
 	endResetModel();
 }
 
-uint32_t LocationInformationModel::addDiveSite(const QString& name, timestamp_t divetime, int lon, int lat)
+void LocationInformationModel::diveSiteDiveCountChanged(dive_site *ds)
 {
-	degrees_t latitude, longitude;
-	latitude.udeg = lat;
-	longitude.udeg = lon;
+	int idx = get_divesite_idx(ds, &dive_site_table);
+	if (idx >= 0)
+		dataChanged(createIndex(idx, NUM_DIVES), createIndex(idx, NUM_DIVES));
+}
 
-	beginInsertRows(QModelIndex(), dive_site_table.nr + 2, dive_site_table.nr + 2);
-	uint32_t uuid = create_dive_site_with_gps(name.toUtf8().data(), latitude, longitude, divetime);
-	qSort(dive_site_table.dive_sites, dive_site_table.dive_sites + dive_site_table.nr, dive_site_less_than);
-	internalRowCount = dive_site_table.nr;
+void LocationInformationModel::diveSiteAdded(struct dive_site *, int idx)
+{
+	if (idx < 0)
+		return;
+	beginInsertRows(QModelIndex(), idx, idx);
+	// Row has already been added by Undo-Command.
 	endInsertRows();
-	return uuid;
 }
 
-bool LocationInformationModel::setData(const QModelIndex &index, const QVariant &value, int role)
+void LocationInformationModel::diveSiteDeleted(struct dive_site *, int idx)
 {
-	if (!index.isValid() || index.row() < 2)
-		return false;
-
-	if (role != Qt::EditRole)
-		return false;
-
-	struct dive_site *ds = get_dive_site(index.row());
-	free(ds->name);
-	ds->name = copy_string(qPrintable(value.toString()));
-	emit dataChanged(index, index);
-	return true;
-}
-
-bool LocationInformationModel::removeRows(int row, int count, const QModelIndex & parent)
-{
-	Q_UNUSED(count);
-	Q_UNUSED(parent);
-	if(row >= rowCount())
-		return false;
-
-	beginRemoveRows(QModelIndex(), row + 2, row + 2);
-	struct dive_site *ds = get_dive_site(row);
-	if (ds)
-		delete_dive_site(ds->uuid);
-	internalRowCount = dive_site_table.nr;
+	if (idx < 0)
+		return;
+	beginRemoveRows(QModelIndex(), idx, idx);
+	// Row has already been added by Undo-Command.
 	endRemoveRows();
-	return true;
 }
 
-GeoReferencingOptionsModel *GeoReferencingOptionsModel::instance() {
+void LocationInformationModel::diveSiteChanged(struct dive_site *ds, int field)
+{
+	int idx = get_divesite_idx(ds, &dive_site_table);
+	if (idx < 0)
+		return;
+	dataChanged(createIndex(idx, field), createIndex(idx, field));
+}
+
+void LocationInformationModel::diveSiteDivesChanged(struct dive_site *ds)
+{
+	int idx = get_divesite_idx(ds, &dive_site_table);
+	if (idx < 0)
+		return;
+	dataChanged(createIndex(idx, NUM_DIVES), createIndex(idx, NUM_DIVES));
+}
+
+bool DiveSiteSortedModel::filterAcceptsRow(int sourceRow, const QModelIndex &source_parent) const
+{
+	if (fullText.isEmpty())
+		return true;
+
+	if (sourceRow < 0 || sourceRow > dive_site_table.nr)
+		return false;
+	struct dive_site *ds = dive_site_table.dive_sites[sourceRow];
+	QString text = QString(ds->name) + QString(ds->description) + QString(ds->notes);
+	return text.contains(fullText, Qt::CaseInsensitive);
+}
+
+bool DiveSiteSortedModel::lessThan(const QModelIndex &i1, const QModelIndex &i2) const
+{
+	// The source indices correspond to indices in the global dive site table.
+	// Let's access them directly without going via the source model.
+	// Kind of dirty, but less effort.
+	struct dive_site *ds1 = get_dive_site(i1.row(), &dive_site_table);
+	struct dive_site *ds2 = get_dive_site(i2.row(), &dive_site_table);
+	if (!ds1 || !ds2) // Invalid dive sites compare as different
+		return false;
+	switch (i1.column()) {
+	case LocationInformationModel::NAME:
+	default:
+		return QString::localeAwareCompare(QString(ds1->name), QString(ds2->name)) < 0; // TODO: avoid copy
+	case LocationInformationModel::DESCRIPTION: {
+		int cmp = QString::localeAwareCompare(QString(ds1->description), QString(ds2->description)); // TODO: avoid copy
+		return cmp != 0 ? cmp < 0 :
+		       QString::localeAwareCompare(QString(ds1->name), QString(ds2->name)) < 0; // TODO: avoid copy
+	}
+	case LocationInformationModel::NUM_DIVES: {
+		int cmp = ds1->dives.nr - ds2->dives.nr;
+		// Since by default nr dives is descending, invert sort direction of names, such that
+		// the names are listed as ascending.
+		return cmp != 0 ? cmp < 0 :
+		       QString::localeAwareCompare(QString(ds1->name), QString(ds2->name)) < 0; // TODO: avoid copy
+	}
+	}
+}
+
+DiveSiteSortedModel::DiveSiteSortedModel()
+{
+	setSourceModel(LocationInformationModel::instance());
+}
+
+QStringList DiveSiteSortedModel::allSiteNames() const
+{
+	QStringList locationNames;
+	int num = rowCount();
+	for (int i = 0; i < num; i++) {
+		int idx = mapToSource(index(i, 0)).row();
+		// This shouldn't happen, but if model and core get out of sync,
+		// (more precisely: the core has more sites than the model is aware of),
+		// we might get an invalid index.
+		if (idx < 0 || idx > dive_site_table.nr) {
+			fprintf(stderr, "DiveSiteSortedModel::allSiteNames(): invalid index");
+			continue;
+		}
+		locationNames << QString(dive_site_table.dive_sites[idx]->name);
+	}
+	return locationNames;
+}
+
+struct dive_site *DiveSiteSortedModel::getDiveSite(const QModelIndex &idx)
+{
+	return get_dive_site(mapToSource(idx).row(), &dive_site_table);
+}
+
+#ifndef SUBSURFACE_MOBILE
+bool DiveSiteSortedModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+	struct dive_site *ds = getDiveSite(index);
+	if (!ds || value.isNull())
+		return false;
+	switch (index.column()) {
+	case LocationInformationModel::NAME:
+		Command::editDiveSiteName(ds, value.toString());
+		return true;
+	case LocationInformationModel::DESCRIPTION:
+		Command::editDiveSiteDescription(ds, value.toString());
+		return true;
+	default:
+		return false;
+	}
+}
+
+// TODO: Remove or edit. It doesn't make sense to call the model here, which calls the undo command,
+// which in turn calls the model.
+void DiveSiteSortedModel::remove(const QModelIndex &index)
+{
+	struct dive_site *ds = getDiveSite(index);
+	if (!ds)
+		return;
+	switch (index.column()) {
+	case LocationInformationModel::EDIT:
+		MainWindow::instance()->editDiveSite(ds);
+		break;
+	case LocationInformationModel::REMOVE:
+		if (ds->dives.nr > 0 &&
+		    QMessageBox::warning(MainWindow::instance(), tr("Delete dive site?"),
+					 tr("This dive site has %n dive(s). Do you really want to delete it?\n", "", ds->dives.nr),
+					 QMessageBox::Yes|QMessageBox::No) == QMessageBox::No)
+				return;
+		Command::deleteDiveSites(QVector<dive_site *>{ds});
+		break;
+	}
+}
+#endif // SUBSURFACE_MOBILE
+
+void DiveSiteSortedModel::setFilter(const QString &text)
+{
+	fullText = text.trimmed();
+	invalidateFilter();
+}
+
+GeoReferencingOptionsModel *GeoReferencingOptionsModel::instance()
+{
 	static GeoReferencingOptionsModel *self = new GeoReferencingOptionsModel();
 	return self;
 }
@@ -184,25 +302,43 @@ GeoReferencingOptionsModel::GeoReferencingOptionsModel(QObject *parent) : QStrin
 	QStringList list;
 	int i;
 	for (i = 0; i < TC_NR_CATEGORIES; i++)
-		list << taxonomy_category_names[i];
+		list << gettextFromC::tr(taxonomy_category_names[i]);
 	setStringList(list);
 }
 
-bool filter_same_gps_cb (QAbstractItemModel *model, int sourceRow, const QModelIndex& parent)
+bool GPSLocationInformationModel::filterAcceptsRow(int sourceRow, const QModelIndex &parent) const
 {
-	int ref_lat = displayed_dive_site.latitude.udeg;
-	int ref_lon = displayed_dive_site.longitude.udeg;
-	uint32_t ref_uuid = displayed_dive_site.uuid;
-	QSortFilterProxyModel *self = (QSortFilterProxyModel*) model;
-
-	uint32_t ds_uuid = self->sourceModel()->index(sourceRow, LocationInformationModel::UUID, parent).data().toUInt();
-	struct dive_site *ds = get_dive_site_by_uuid(ds_uuid);
-
-	if (!ds)
+	struct dive_site *ds = sourceModel()->index(sourceRow, LocationInformationModel::DIVESITE, parent).data().value<dive_site *>();
+	if (!ds || ds == ignoreDs || ds == RECENTLY_ADDED_DIVESITE)
 		return false;
 
-	if (ds->latitude.udeg == 0 || ds->longitude.udeg == 0)
-		return false;
+	return distance <= 0 ? same_location(&ds->location, &location)
+			     : (int64_t)get_distance(&ds->location, &location) * 1000 <= distance; // We need 64 bit to represent distances in mm
+}
 
-	return (ds->latitude.udeg == ref_lat && ds->longitude.udeg == ref_lon && ds->uuid != ref_uuid);
+GPSLocationInformationModel::GPSLocationInformationModel(QObject *parent) : QSortFilterProxyModel(parent),
+	ignoreDs(nullptr),
+	location({{0},{0}}),
+	distance(0)
+{
+	setSourceModel(LocationInformationModel::instance());
+}
+
+void GPSLocationInformationModel::set(const struct dive_site *ignoreDsIn, const location_t &locationIn)
+{
+	ignoreDs = ignoreDsIn;
+	location = locationIn;
+	invalidate();
+}
+
+void GPSLocationInformationModel::setCoordinates(const location_t &locationIn)
+{
+	location = locationIn;
+	invalidate();
+}
+
+void GPSLocationInformationModel::setDistance(int64_t dist)
+{
+	distance = dist;
+	invalidate();
 }

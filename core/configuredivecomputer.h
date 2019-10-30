@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef CONFIGUREDIVECOMPUTER_H
 #define CONFIGUREDIVECOMPUTER_H
 
@@ -25,7 +26,7 @@ public:
 		FWUPDATE,
 		CANCELLING,
 		CANCELLED,
-		ERROR,
+		ERRORED,
 		DONE,
 	};
 

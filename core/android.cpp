@@ -1,18 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0
 /* implements Android specific functions */
 #include "dive.h"
 #include "display.h"
+#include "file.h"
+#include "qthelper.h"
 #include <string.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <libusb.h>
 #include <errno.h>
+#include <unistd.h>
+#include <zip.h>
 
 #include <QtAndroidExtras/QtAndroidExtras>
 #include <QtAndroidExtras/QAndroidJniObject>
 #include <QtAndroid>
+#include <QDebug>
 
-#define FTDI_VID 0x0403
+#if defined(SUBSURFACE_MOBILE)
+#include "mobile-widgets/qmlmanager.h"
+#define LOG(x) QMLManager::instance()->appendTextToLog(x);
+#else
+#define LOG(x) qDebug() << x;
+#endif
+
+
 #define USB_SERVICE "usb"
 
 extern "C" {
@@ -50,7 +63,7 @@ static const char *system_default_path_append(const char *append)
 	if (append)
 		path += QString("/%1").arg(append);
 
-	return strdup(path.toUtf8().data());
+	return copy_qstring(path);
 }
 
 const char *system_default_directory(void)
@@ -70,7 +83,7 @@ const char *system_default_filename(void)
 	return path;
 }
 
-int enumerate_devices(device_callback_t callback, void *userdata, int dc_type)
+int enumerate_devices(device_callback_t callback, void *userdata, unsigned int transport)
 {
 	/* FIXME: we need to enumerate in some other way on android */
 	/* qtserialport maybee? */
@@ -101,6 +114,7 @@ int get_usb_fd(uint16_t idVendor, uint16_t idProduct)
 	jint num_devices = deviceMap.callMethod<jint>("size", "()I");
 	if (num_devices == 0) {
 		// No USB device is attached.
+		LOG("usbManager says no devices attached");
 		return -1;
 	}
 
@@ -113,11 +127,13 @@ int get_usb_fd(uint16_t idVendor, uint16_t idProduct)
 		usbDevice = deviceMap.callObjectMethod ("get", "(Ljava/lang/Object;)Ljava/lang/Object;", usbName.object());
 		vendorid = usbDevice.callMethod<jint>("getVendorId", "()I");
 		productid = usbDevice.callMethod<jint>("getProductId", "()I");
+		LOG(QString("Looking at device with VID/PID %1/%2").arg(vendorid).arg(productid));
 		if(vendorid == idVendor && productid == idProduct) // Found the requested device
 			break;
 	}
 	if (i == num_devices) {
 		// No device found.
+		LOG(QString("Didn't find device matching %1/%2").arg(idVendor).arg(idProduct))
 		errno = ENOENT;
 		return -1;
 	}
@@ -127,6 +143,7 @@ int get_usb_fd(uint16_t idVendor, uint16_t idProduct)
 		// You do not have permission to use the usbDevice.
 		// Please remove and reinsert the USB device.
 		// Could also give an dialogbox asking for permission.
+		LOG("usbManager tells us we don't have permission to access this device");
 		errno = EPERM;
 		return -1;
 	}
@@ -136,6 +153,7 @@ int get_usb_fd(uint16_t idVendor, uint16_t idProduct)
 	QAndroidJniObject usbDeviceConnection = usbManager.callObjectMethod("openDevice", "(Landroid/hardware/usb/UsbDevice;)Landroid/hardware/usb/UsbDeviceConnection;", usbDevice.object());
 	if (usbDeviceConnection.object() == NULL) {
 		// Some error occurred while opening the device. Exit.
+		LOG("usbManager said we had permission to access, but then opening the device failed");
 		errno = EINVAL;
 		return -1;
 	}
@@ -144,10 +162,26 @@ int get_usb_fd(uint16_t idVendor, uint16_t idProduct)
 	fd = usbDeviceConnection.callMethod<jint>("getFileDescriptor", "()I");
 	if (fd == -1) {
 		// The device is not opened. Some error.
+		LOG("usbManager said we successfully opened the device, but the fd was -1");
 		errno = ENODEV;
 		return -1;
 	}
 	return fd;
+}
+
+JNIEXPORT void JNICALL
+Java_org_subsurfacedivelog_mobile_SubsurfaceMobileActivity_setDeviceString(JNIEnv *env,
+	jobject obj,
+	jstring javaDeviceString)
+{
+	const char *deviceString = env->GetStringUTFChars(javaDeviceString, NULL);
+	Q_UNUSED (obj)
+	LOG(deviceString);
+#if defined(SUBSURFACE_MOBILE)
+	QMLManager::instance()->showDownloadPage(deviceString);
+#endif
+	env->ReleaseStringUTFChars(javaDeviceString, deviceString);
+	return;
 }
 
 /* NOP wrappers to comform with windows.c */
@@ -176,6 +210,11 @@ int subsurface_access(const char *path, int mode)
 	return access(path, mode);
 }
 
+int subsurface_stat(const char* path, struct stat* buf)
+{
+	return stat(path, buf);
+}
+
 struct zip *subsurface_zip_open_readonly(const char *path, int flags, int *errorp)
 {
 	return zip_open(path, flags, errorp);
@@ -187,7 +226,7 @@ int subsurface_zip_close(struct zip *zip)
 }
 
 /* win32 console */
-void subsurface_console_init(bool dedicated)
+void subsurface_console_init(void)
 {
 	/* NOP */
 }
@@ -201,4 +240,24 @@ bool subsurface_user_is_root()
 {
 	return false;
 }
+}
+
+/* called from QML manager */
+void checkPendingIntents()
+{
+	QAndroidJniObject activity = QtAndroid::androidActivity();
+	if (activity.isValid()) {
+		activity.callMethod<void>("checkPendingIntents");
+		qDebug() << "checkPendingIntents ";
+		return;
+	}
+	qDebug() << "checkPendingIntents: Activity not valid";
+}
+
+QString getAndroidHWInfo()
+{
+	return QStringLiteral("%1/%2/%3")
+			.arg(QAndroidJniObject::getStaticObjectField<jstring>("android/os/Build", "MODEL").toString())
+			.arg(QAndroidJniObject::getStaticObjectField<jstring>("android/os/Build", "BRAND").toString())
+			.arg(QAndroidJniObject::getStaticObjectField<jstring>("android/os/Build", "PRODUCT").toString());
 }

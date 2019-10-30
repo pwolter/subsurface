@@ -7,20 +7,12 @@ if(BTSUPPORT)
 	set(BT_SRC_FILES btdeviceselectiondialog.cpp)
 endif()
 
-if (FBSUPPORT)
-	add_definitions(-DFBSUPPORT)
-endif()
-
-
 include_directories(.
 	${CMAKE_CURRENT_BINARY_DIR}
 	${CMAKE_BINARY_DIR}
 )
 
 add_subdirectory(preferences)
-if(NOT DISABLE_PLUGINS)
-	add_subdirectory(plugins)
-endif()
 
 set (SUBSURFACE_UI
 	about.ui
@@ -30,13 +22,14 @@ set (SUBSURFACE_UI
 	divecomputermanagementdialog.ui
 	divelogexportdialog.ui
 	divelogimportdialog.ui
+	divesiteimportdialog.ui
 	diveplanner.ui
 	diveshareexportdialog.ui
 	downloadfromdivecomputer.ui
-	filterwidget.ui
+	filterwidget2.ui
+	findmovedimagesdialog.ui
 	listfilter.ui
-	locationInformation.ui
-	maintab.ui
+	locationinformation.ui
 	mainwindow.ui
 	plannerDetails.ui
 	plannerSettings.ui
@@ -51,58 +44,134 @@ set (SUBSURFACE_UI
 	urldialog.ui
 	usersurvey.ui
 	webservices.ui
+	tab-widgets/maintab.ui
+	tab-widgets/TabDiveStatistics.ui
+	tab-widgets/TabDiveInformation.ui
+	tab-widgets/TabDivePhotos.ui
+	tab-widgets/TabDiveExtraInfo.ui
+	tab-widgets/TabDiveEquipment.ui
+	tab-widgets/TabDiveSite.ui
 )
 
 # the interface, in C++
 set(SUBSURFACE_INTERFACE
-	updatemanager.cpp
+	../map-widget/qmlmapwidgethelper.cpp
 	about.cpp
-	divecomputermanagementdialog.cpp
-	divelistview.cpp
-	diveplanner.cpp
-	diveshareexportdialog.cpp
-	downloadfromdivecomputer.cpp
-	globe.cpp
-	kmessagewidget.cpp
-	maintab.cpp
-	mainwindow.cpp
-	modeldelegates.cpp
-	notificationwidget.cpp
-	simplewidgets.cpp
-	starwidget.cpp
-	subsurfacewebservices.cpp
-	tableview.cpp
-	divelogimportdialog.cpp
-	tagwidget.cpp
-	groupedlineedit.cpp
-	divelogexportdialog.cpp
-	divepicturewidget.cpp
-	usersurvey.cpp
+	about.h
+	command.cpp
+	command.h
+	command_base.cpp
+	command_base.h
+	command_divelist.cpp
+	command_divelist.h
+	command_divesite.cpp
+	command_divesite.h
+	command_edit.cpp
+	command_edit.h
+	command_edit_trip.cpp
+	command_edit_trip.h
+	command_private.cpp
+	command_private.h
 	configuredivecomputerdialog.cpp
-	undocommands.cpp
+	configuredivecomputerdialog.h
+	divecomputermanagementdialog.cpp
+	divecomputermanagementdialog.h
+	divelistview.cpp
+	divelistview.h
+	divelogexportdialog.cpp
+	divelogexportdialog.h
+	divelogimportdialog.cpp
+	divelogimportdialog.h
+	divepicturewidget.cpp
+	divepicturewidget.h
+	diveplanner.cpp
+	diveplanner.h
+	diveshareexportdialog.cpp
+	diveshareexportdialog.h
+	divesiteimportdialog.cpp
+	divesiteimportdialog.h
+	downloadfromdivecomputer.cpp
+	downloadfromdivecomputer.h
+	filterwidget2.cpp
+	filterwidget2.h
+	findmovedimagesdialog.cpp
+	findmovedimagesdialog.h
+	groupedlineedit.cpp
+	groupedlineedit.h
+	kmessagewidget.cpp
+	kmessagewidget.h
 	locationinformation.cpp
+	locationinformation.h
+	mainwindow.cpp
+	mainwindow.h
+	mapwidget.cpp
+	mapwidget.h
+	modeldelegates.cpp
+	modeldelegates.h
+	notificationwidget.cpp
+	notificationwidget.h
 	qtwaitingspinner.cpp
+	qtwaitingspinner.h
+	simplewidgets.cpp
+	simplewidgets.h
+	starwidget.cpp
+	starwidget.h
+	subsurfacewebservices.cpp
+	subsurfacewebservices.h
+	tab-widgets/TabBase.cpp
+	tab-widgets/TabBase.h
+	tab-widgets/TabDiveExtraInfo.cpp
+	tab-widgets/TabDiveExtraInfo.h
+	tab-widgets/TabDiveEquipment.cpp
+	tab-widgets/TabDiveEquipment.h
+	tab-widgets/TabDiveInformation.cpp
+	tab-widgets/TabDiveInformation.h
+	tab-widgets/TabDivePhotos.cpp
+	tab-widgets/TabDivePhotos.h
+	tab-widgets/TabDiveStatistics.cpp
+	tab-widgets/TabDiveStatistics.h
+	tab-widgets/TabDiveSite.cpp
+	tab-widgets/TabDiveSite.h
+	tab-widgets/maintab.cpp
+	tab-widgets/maintab.h
+	tableview.cpp
+	tableview.h
+	tagwidget.cpp
+	tagwidget.h
+	textedit.cpp
+	textedit.h
+	updatemanager.cpp
+	updatemanager.h
+	usersurvey.cpp
+	usersurvey.h
 )
 
 if(NOT NO_USERMANUAL)
 	set(SUBSURFACE_INTERFACE ${SUBSURFACE_INTERFACE}
 		usermanual.cpp
+		usermanual.h
 	)
 endif()
 
 if(NOT NO_PRINTING)
 	set(SUBSURFACE_INTERFACE ${SUBSURFACE_INTERFACE}
-		templateedit.cpp
 		printdialog.cpp
-		printoptions.cpp
+		printdialog.h
 		printer.cpp
+		printer.h
+		printoptions.cpp
+		printoptions.h
+		templateedit.cpp
+		templateedit.h
 		templatelayout.cpp
+		templatelayout.h
 	)
 endif()
 
 if (BTSUPPORT)
 	set(SUBSURFACE_INTERFACE ${SUBSURFACE_INTERFACE}
 		btdeviceselectiondialog.cpp
+		btdeviceselectiondialog.h
 	)
 endif()
 
@@ -110,10 +179,14 @@ source_group("Subsurface Interface" FILES ${SUBSURFACE_INTERFACE})
 
 # the yearly statistics widget.
 set(SUBSURFACE_STATISTICS_LIB_SRCS
-	statistics/statisticswidget.cpp
-	statistics/yearstatistics.cpp
-	statistics/statisticsbar.cpp
 	statistics/monthstatistics.cpp
+	statistics/monthstatistics.h
+	statistics/statisticsbar.cpp
+	statistics/statisticsbar.h
+	statistics/statisticswidget.cpp
+	statistics/statisticswidget.h
+	statistics/yearstatistics.cpp
+	statistics/yearstatistics.h
 )
 source_group("Subsurface Statistics" FILES ${SUBSURFACE_STATISTICS_LIB_SRCS})
 
@@ -124,4 +197,4 @@ target_link_libraries(subsurface_statistics ${QT_LIBRARIES})
 add_library(subsurface_generated_ui STATIC ${SUBSURFACE_UI_HDRS})
 target_link_libraries(subsurface_generated_ui ${QT_LIBRARIES})
 add_library(subsurface_interface STATIC ${SUBSURFACE_INTERFACE} ${SUBSURFACE_UI_SRCS})
-target_link_libraries(subsurface_interface ${QT_LIBRARIES} ${MARBLE_LIBRARIES} ${GRANTLEE_LIBRARIES} subsurface_desktop_preferences)
+target_link_libraries(subsurface_interface ${QT_LIBRARIES} ${GRANTLEE_LIBRARIES} subsurface_desktop_preferences)

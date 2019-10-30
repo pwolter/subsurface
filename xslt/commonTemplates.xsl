@@ -168,6 +168,83 @@
     <xsl:value-of select="concat(floor($depth div 1000), '.', format-number($depth mod 1000, '00'))"/>
   </xsl:template>
 
+  <!-- convert depth to meters -->
+  <xsl:template name="depthConvert">
+    <xsl:param name="depth"/>
+    <xsl:param name="units"/>
+
+    <xsl:choose>
+      <xsl:when test="$units = 'Imperial'">
+        <xsl:value-of select="concat(format-number(($depth * 0.3048), '#.##'), ' m')"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="concat($depth, ' m')"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+  <!-- end convert depth -->
+
+  <!-- convert pressure to bars -->
+  <xsl:template name="pressureConvert">
+    <xsl:param name="number"/>
+    <xsl:param name="units"/>
+
+    <xsl:choose>
+      <xsl:when test="$units = 'Imperial'">
+        <xsl:value-of select="concat(format-number(($number div 14.5037738007), '#.##'), ' bar')"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="concat($number, ' bar')"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+  <!-- end convert pressure -->
+
+  <!-- convert cuft to litres -->
+  <xsl:template name="sizeConvert">
+    <xsl:param name="singleSize"/>
+    <xsl:param name="double"/>
+    <xsl:param name="pressure"/>
+    <xsl:param name="units"/>
+
+    <xsl:variable name="size">
+      <xsl:value-of select="format-number($singleSize + $singleSize * $double, '#.##')"/>
+    </xsl:variable>
+
+    <xsl:choose>
+      <xsl:when test="$units = 'Imperial'">
+        <xsl:if test="$pressure != '0'">
+          <xsl:value-of select="concat(format-number((($size * 14.7 div $pressure) div 0.035315), '#.##'), ' l')"/>
+        </xsl:if>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="concat($size, ' l')"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+  <!-- end convert pressure -->
+
+  <!-- convert temperature from F to C -->
+  <xsl:template name="tempConvert">
+    <xsl:param name="temp"/>
+    <xsl:param name="units"/>
+
+    <xsl:choose>
+      <xsl:when test="$units = 'Imperial'">
+        <xsl:if test="$temp != ''">
+          <xsl:value-of select="concat(format-number(($temp - 32) * 5 div 9, '0.0'), ' C')"/>
+        </xsl:if>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:if test="$temp != ''">
+          <xsl:value-of select="concat($temp, ' C')"/>
+        </xsl:if>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+  <!-- end convert temperature -->
+
+
   <!-- Convert date format "Sun Jan 19 11:02:56 2014 UTC" => 2014-1-19
        11:02 -->
   <xsl:template name="convertDate">
@@ -209,35 +286,68 @@
     <xsl:value-of select="concat($year, '-', $month, '-', $day, ' ', $time)"/>
   </xsl:template>
 
+  <xsl:template name="unquote">
+    <xsl:param name="field" />
+    <xsl:param name="value" />
+
+    <xsl:variable name="quote">
+      <xsl:choose>
+        <xsl:when test="$value != ''">
+          <xsl:value-of select="'&quot;'"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="''"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <xsl:choose>
+      <xsl:when test="substring-before($field, '&quot;') = ''">
+        <xsl:value-of select="concat($value, $quote, $field)" />
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:call-template name="unquote">
+          <xsl:with-param name="field" select="substring-after(substring-after($field, '&quot;'), '&quot;')" />
+          <xsl:with-param name="value" select="concat($value, $quote, substring-before($field, '&quot;'))" />
+        </xsl:call-template>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
   <xsl:template name="getFieldByIndex">
     <xsl:param name="index"/>
     <xsl:param name="line"/>
     <xsl:param name="remaining"/>
     <xsl:choose>
       <xsl:when test="$index > 0">
-        <xsl:choose>
-          <xsl:when test="substring($line, 1, 1) = '&quot;'">
-            <xsl:call-template name="getFieldByIndex">
-              <xsl:with-param name="index" select="$index -1"/>
-              <xsl:with-param name="line" select="substring-after($line, $fs)"/>
-              <xsl:with-param name="remaining" select="$remaining"/>
-            </xsl:call-template>
-          </xsl:when>
-          <xsl:otherwise>
-            <xsl:call-template name="getFieldByIndex">
-              <xsl:with-param name="index" select="$index -1"/>
-              <xsl:with-param name="line" select="substring-after($line, $fs)"/>
-              <xsl:with-param name="remaining" select="$remaining"/>
-            </xsl:call-template>
-          </xsl:otherwise>
-        </xsl:choose>
+        <xsl:call-template name="getFieldByIndex">
+          <xsl:with-param name="index" select="$index -1"/>
+          <xsl:with-param name="line" select="substring-after($line, $fs)"/>
+          <xsl:with-param name="remaining" select="$remaining"/>
+        </xsl:call-template>
       </xsl:when>
       <xsl:otherwise>
         <xsl:choose>
           <xsl:when test="substring($line, 1, 1) = '&quot;'">
             <xsl:choose>
-              <xsl:when test="substring-before(substring-after($line, '&quot;'), '&quot;') != ''">
-                <xsl:value-of select="substring-before(substring-after($line, '&quot;'), '&quot;')"/>
+              <!-- We either have a field that ends with quote and field separator, or the last character of line is quote -->
+              <xsl:when test="substring-before(substring-after($line, '&quot;'), concat('&quot;', $fs)) != '' or substring($line, string-length($line), 1)">
+                <xsl:choose>
+                  <xsl:when test="substring-before(substring-before(substring-after($line, '&quot;'), concat('&quot;', $fs)), '&quot;') != ''">
+                    <xsl:call-template name="unquote">
+                      <xsl:with-param name="field" select="substring-before(substring-after($line, '&quot;'), concat('&quot;', $fs))" />
+                      <xsl:with-param name="value" select="''" />
+                    </xsl:call-template>
+                  </xsl:when>
+                  <xsl:when test="substring($line, string-length($line), 1) = '&quot;'">
+                    <xsl:value-of select="substring-before(substring-after($line, '&quot;'), '&quot;')"/>
+                  </xsl:when>
+                  <xsl:otherwise>
+
+                    <xsl:value-of select="substring-before(substring-after($line, '&quot;'), concat('&quot;', $fs))"/>
+                  </xsl:otherwise>
+                </xsl:choose>
+
               </xsl:when>
               <xsl:otherwise>
                 <xsl:choose>
@@ -259,7 +369,7 @@
                 <xsl:value-of select="substring-before($line,$fs)"/>
               </xsl:when>
               <xsl:otherwise>
-                <xsl:if test="substring-after($line, $fs) = ''">
+                <xsl:if test="substring-after($line, $fs) = '' and $line != $fs">
                   <xsl:value-of select="$line"/>
                 </xsl:if>
               </xsl:otherwise>

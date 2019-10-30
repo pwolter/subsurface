@@ -1,18 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVESITEHELPERS_H
 #define DIVESITEHELPERS_H
 
+#include "taxonomy.h"
 #include "units.h"
-#include <QThread>
 
-class ReverseGeoLookupThread : public QThread {
-Q_OBJECT
-public:
-	static ReverseGeoLookupThread *instance();
-	void lookup(struct dive_site *ds);
-	void run() Q_DECL_OVERRIDE;
-
-private:
-	ReverseGeoLookupThread(QObject *parent = 0);
-};
+// Perform a reverse geo-lookup and put data in the provided taxonomy field.
+// Original data with the exception of OCEAN will be overwritten.
+void reverseGeoLookup(degrees_t latitude, degrees_t longitude, taxonomy_data *taxonomy);
 
 #endif // DIVESITEHELPERS_H

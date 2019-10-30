@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <QObject>
 #include <QTimer>
 #include <QNetworkAccessManager>
@@ -5,11 +6,11 @@
 #include <QEventLoop>
 
 #include "pref.h"
-#include "helpers.h"
+#include "qthelper.h"
 #include "git-access.h"
+#include "errorhelper.h"
 
 #include "checkcloudconnection.h"
-
 
 CheckCloudConnection::CheckCloudConnection(QObject *parent) :
 	QObject(parent),
@@ -51,19 +52,18 @@ bool CheckCloudConnection::checkServer()
 				mgr->deleteLater();
 				if (verbose > 1)
 					qWarning() << "Cloud storage: successfully checked connection to cloud server";
-				git_storage_update_progress(false, "successfully checked cloud connection");
 				return true;
 			}
 		} else if (seconds < prefs.cloud_timeout) {
-			QString text = QString("waited %1 sec for cloud connetion").arg(seconds);
-			git_storage_update_progress(false, qPrintable(text));
+			QString text = tr("Waiting for cloud connection (%n second(s) passed)", "", seconds);
+			git_storage_update_progress(qPrintable(text));
 		} else {
 			disconnect(reply, SIGNAL(finished()), &loop, SLOT(quit()));
 			reply->abort();
 		}
 	}
-	git_storage_update_progress(false, "cloud connection failed");
-	prefs.git_local_only = true;
+	git_storage_update_progress(qPrintable(tr("Cloud connection failed")));
+	git_local_only = true;
 	if (verbose)
 		qDebug() << "connection test to cloud server failed" <<
 			    reply->error() << reply->errorString() <<
@@ -76,26 +76,11 @@ bool CheckCloudConnection::checkServer()
 	return false;
 }
 
-void CheckCloudConnection::sslErrors(QList<QSslError> errorList)
+void CheckCloudConnection::sslErrors(const QList<QSslError> &errorList)
 {
-	if (verbose) {
-		qDebug() << "Received error response trying to set up https connection with cloud storage backend:";
-		Q_FOREACH (QSslError err, errorList) {
-			qDebug() << err.errorString();
-		}
-	}
-	QSslConfiguration conf = reply->sslConfiguration();
-	QSslCertificate cert = conf.peerCertificate();
-	QByteArray hexDigest = cert.digest().toHex();
-	if (reply->url().toString().contains(prefs.cloud_base_url) &&
-	    hexDigest == "13ff44c62996cfa5cd69d6810675490e") {
-		if (verbose)
-			qDebug() << "Overriding SSL check as I recognize the certificate digest" << hexDigest;
-		reply->ignoreSslErrors();
-	} else {
-		if (verbose)
-			qDebug() << "got invalid SSL certificate with hex digest" << hexDigest;
-	}
+	qDebug() << "Received error response trying to set up https connection with cloud storage backend:";
+	for (QSslError err: errorList)
+		qDebug() << err.errorString();
 }
 
 // helper to be used from C code
@@ -103,6 +88,5 @@ extern "C" bool canReachCloudServer()
 {
 	if (verbose)
 		qWarning() << "Cloud storage: checking connection to cloud server";
-	CheckCloudConnection *checker = new CheckCloudConnection;
-	return checker->checkServer();
+	return CheckCloudConnection().checkServer();
 }

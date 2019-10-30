@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef UNITS_H
 #define UNITS_H
 
@@ -8,15 +9,16 @@
 
 #ifdef __cplusplus
 extern "C" {
+#else
+#include <stdbool.h>
 #endif
 
 #define O2_IN_AIR 209 // permille
 #define N2_IN_AIR 781
-#define O2_DENSITY 1429 // mg/Liter
-#define N2_DENSITY 1251
-#define HE_DENSITY 179
+#define O2_DENSITY 1331 // mg/Liter
+#define N2_DENSITY 1165
+#define HE_DENSITY 166
 #define SURFACE_PRESSURE 1013 // mbar
-#define SURFACE_PRESSURE_STRING "1013"
 #define ZERO_C_IN_MKELVIN 273150 // mKelvin
 
 #ifdef __cplusplus
@@ -27,6 +29,7 @@ extern "C" {
 
 /* Salinity is expressed in weight in grams per 10l */
 #define SEAWATER_SALINITY 10300
+#define EN13319_SALINITY 10200
 #define FRESHWATER_SALINITY 10000
 
 #include <stdint.h>
@@ -41,8 +44,11 @@ extern "C" {
  * We also strive to make '0' a meaningless number saying "not
  * initialized", since many values are things that may not have
  * been reported (eg cylinder pressure or temperature from dive
- * computers that don't support them). But sometimes -1 is an even
- * more explicit way of saying "not there".
+ * computers that don't support them). But for some of the values
+ * 0 doesn't works as a flag for not initialized. Examples are
+ * compass bearing (bearing_t) or NDL (duration_t).
+ * Therefore some types have a default value which is -1 and has to
+ * be set at certain points in the code.
  *
  * Thus "millibar" for pressure, for example, or "millikelvin" for
  * temperatures. Doing temperatures in celsius or fahrenheit would
@@ -53,7 +59,7 @@ extern "C" {
  * Also strive to use units that can not possibly be mistaken for a
  * valid value in a "normal" system without conversion. If the max
  * depth of a dive is '20000', you probably didn't convert from mm on
- * output, or if the max depth gets reported as "0.2ft" it was either
+ * output, or if the max. depth gets reported as "0.2ft" it was either
  * a really boring dive, or there was some missing input conversion,
  * and a 60-ft dive got recorded as 60mm.
  *
@@ -69,7 +75,7 @@ typedef int64_t timestamp_t;
 
 typedef struct
 {
-	uint32_t seconds; // durations up to 68 yrs
+	int32_t seconds; // durations up to 34 yrs
 } duration_t;
 
 typedef struct
@@ -99,8 +105,13 @@ typedef struct
 
 typedef struct
 {
-	uint32_t mkelvin; // up to 1750 degrees K (temperatures in K are always positive)
+	uint32_t mkelvin; // up to 4 MK (temperatures in K are always positive)
 } temperature_t;
+
+typedef struct
+{
+	uint64_t mkelvin; // up to 18446744073 MK (temperatures in K are always positive)
+} temperature_sum_t;
 
 typedef struct
 {
@@ -122,6 +133,31 @@ typedef struct
 	int udeg;
 } degrees_t;
 
+typedef struct pos {
+	degrees_t lat, lon;
+} location_t;
+
+extern void parse_location(const char *, location_t *);
+
+static inline bool has_location(const location_t *loc)
+{
+	return loc->lat.udeg || loc->lon.udeg;
+}
+
+static inline bool same_location(const location_t *a, const location_t *b)
+{
+	return (a->lat.udeg == b->lat.udeg) && (a->lon.udeg == b->lon.udeg);
+}
+
+static inline location_t create_location(double lat, double lon)
+{
+	location_t location = {
+		{ (int) lrint(lat * 1000000) },
+		{ (int) lrint(lon * 1000000) }
+	};
+	return location;
+}
+
 static inline double udeg_to_radians(int udeg)
 {
 	return (udeg * M_PI) / (1000000.0 * 180.0);
@@ -134,7 +170,7 @@ static inline double grams_to_lbs(int grams)
 
 static inline int lbs_to_grams(double lbs)
 {
-	return rint(lbs * 453.6);
+	return (int)lrint(lbs * 453.6);
 }
 
 static inline double ml_to_cuft(int ml)
@@ -159,12 +195,12 @@ static inline double m_to_mile(int m)
 
 static inline unsigned long feet_to_mm(double feet)
 {
-	return rint(feet * 304.8);
+	return lrint(feet * 304.8);
 }
 
 static inline int to_feet(depth_t depth)
 {
-	return rint(mm_to_feet(depth.mm));
+	return (int)lrint(mm_to_feet(depth.mm));
 }
 
 static inline double mkelvin_to_C(int mkelvin)
@@ -179,12 +215,12 @@ static inline double mkelvin_to_F(int mkelvin)
 
 static inline unsigned long F_to_mkelvin(double f)
 {
-	return rint((f - 32) * 1000 / 1.8 + ZERO_C_IN_MKELVIN);
+	return lrint((f - 32) * 1000 / 1.8 + ZERO_C_IN_MKELVIN);
 }
 
 static inline unsigned long C_to_mkelvin(double c)
 {
-	return rint(c * 1000 + ZERO_C_IN_MKELVIN);
+	return lrint(c * 1000 + ZERO_C_IN_MKELVIN);
 }
 
 static inline double psi_to_bar(double psi)
@@ -194,12 +230,12 @@ static inline double psi_to_bar(double psi)
 
 static inline long psi_to_mbar(double psi)
 {
-	return rint(psi_to_bar(psi) * 1000);
+	return lrint(psi_to_bar(psi) * 1000);
 }
 
 static inline int to_PSI(pressure_t pressure)
 {
-	return rint(pressure.mbar * 0.0145037738);
+	return (int)lrint(pressure.mbar * 0.0145037738);
 }
 
 static inline double bar_to_atm(double bar)
@@ -218,17 +254,25 @@ static inline int mbar_to_PSI(int mbar)
 	return to_PSI(p);
 }
 
+static inline int32_t altitude_to_pressure(int32_t altitude) 	// altitude in mm above sea level
+{						// returns atmospheric pressure in mbar
+	return (int32_t) (1013.0 * exp(- altitude / 7800000.0));
+}
+
+
+static inline int32_t pressure_to_altitude(int32_t pressure)	// pressure in mbar
+{						// returns altitude in mm above sea level
+	return (int32_t) (log(1013.0 / pressure) * 7800000);
+}
+
 /*
  * We keep our internal data in well-specified units, but
  * the input and output may come in some random format. This
  * keeps track of those units.
  */
 /* turns out in Win32 PASCAL is defined as a calling convention */
-#ifdef WIN32
-#undef PASCAL
-#endif
 struct units {
-	enum LENGHT {
+	enum LENGTH {
 		METERS,
 		FEET
 	} length;
@@ -239,7 +283,7 @@ struct units {
 	enum PRESSURE {
 		BAR,
 		PSI,
-		PASCAL
+		PASCALS
 	} pressure;
 	enum TEMPERATURE {
 		CELSIUS,
@@ -254,6 +298,12 @@ struct units {
 		SECONDS,
 		MINUTES
 	} vertical_speed_time;
+	enum DURATION {
+		MIXED,
+		MINUTES_ONLY,
+		ALWAYS_HOURS
+	} duration_units;
+	bool show_units_table;
 };
 
 /*
@@ -263,16 +313,31 @@ struct units {
  * actually use. Similarly, C instead of Kelvin.
  * And kg instead of g.
  */
-#define SI_UNITS                                                                                                                         \
-	{                                                                                                                                \
-		.length = METERS, .volume = LITER, .pressure = BAR, .temperature = CELSIUS, .weight = KG, .vertical_speed_time = MINUTES \
-	}
+#define SI_UNITS                                                                                           \
+        {                                                                                                  \
+	        .length = METERS, .volume = LITER, .pressure = BAR, .temperature = CELSIUS, .weight = KG,  \
+		.vertical_speed_time = MINUTES, .duration_units = MIXED, .show_units_table = false         \
+        }
 
-#define IMPERIAL_UNITS                                                                                                                    \
-	{                                                                                                                                 \
-		.length = FEET, .volume = CUFT, .pressure = PSI, .temperature = FAHRENHEIT, .weight = LBS, .vertical_speed_time = MINUTES \
-	}
+#define IMPERIAL_UNITS                                                                                     \
+        {                                                                                                  \
+	        .length = FEET, .volume = CUFT, .pressure = PSI, .temperature = FAHRENHEIT, .weight = LBS, \
+		.vertical_speed_time = MINUTES, .duration_units = MIXED, .show_units_table = false         \
+        }
 
+extern const struct units SI_units, IMPERIAL_units;
+
+extern const struct units *get_units(void);
+
+extern int get_pressure_units(int mb, const char **units);
+extern double get_depth_units(int mm, int *frac, const char **units);
+extern double get_volume_units(unsigned int ml, int *frac, const char **units);
+extern double get_temp_units(unsigned int mk, const char **units);
+extern double get_weight_units(unsigned int grams, int *frac, const char **units);
+extern double get_vertical_speed_units(unsigned int mms, int *frac, const char **units);
+
+extern depth_t units_to_depth(double depth);
+extern int units_to_sac(double volume);
 #ifdef __cplusplus
 }
 #endif

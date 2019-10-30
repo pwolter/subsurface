@@ -56,6 +56,14 @@
         </LOCATION>
       </xsl:when>
       <xsl:otherwise>
+        <xsl:if test="/divelog/divesites/site[@uuid = $uuid]/geo/@value != ''">
+          <LOCATION>
+            <xsl:for-each select="/divelog/divesites/site[@uuid = $uuid]/geo/@value">
+              <xsl:if test="position() != 1"> / </xsl:if>
+              <xsl:value-of select="."/>
+            </xsl:for-each>
+          </LOCATION>
+        </xsl:if>
         <SITE>
           <xsl:value-of select="$location"/>
         </SITE>
@@ -239,10 +247,10 @@
       <xsl:value-of select="substring-before(node()/depth/@mean, ' ')"/>
     </MEANDEPTH>
     <AIRTEMP>
-      <xsl:value-of select="substring-before(node()/temperature/@air, ' ')"/>
+      <xsl:value-of select="substring-before(node()/temperature/@air|divetemperature/@air, ' ')"/>
     </AIRTEMP>
     <WATERTEMPMAXDEPTH>
-      <xsl:value-of select="substring-before(node()/temperature/@water, ' ')"/>
+      <xsl:value-of select="substring-before(node()/temperature/@water|divetemperature/@water, ' ')"/>
     </WATERTEMPMAXDEPTH>
     <xsl:variable name="manual">
       <xsl:choose>

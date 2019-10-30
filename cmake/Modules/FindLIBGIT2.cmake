@@ -18,8 +18,6 @@ NAMES git2.h
 HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../install-root/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libgit2/include
-    /usr/local/include
-    /usr/include
 )
 
 IF ( LIBGIT2_DYNAMIC )
@@ -34,10 +32,12 @@ NAMES
 HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../install-root/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/../libgit2/build
-    /usr/local/include
-    /usr/include
 )
-SET(LIBGIT2_LIBRARIES ${LIBGIT2_LIBRARIES} -lssl -lcrypto)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+	SET(LIBGIT2_LIBRARIES ${LIBGIT2_LIBRARIES})
+else()
+	SET(LIBGIT2_LIBRARIES ${LIBGIT2_LIBRARIES} -lssl -lcrypto)
+endif()
 
 INCLUDE( FindPackageHandleStandardArgs )
 FIND_PACKAGE_HANDLE_STANDARD_ARGS( git2 DEFAULT_MSG LIBGIT2_INCLUDE_DIR LIBGIT2_LIBRARIES )

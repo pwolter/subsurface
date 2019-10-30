@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "tagwidget.h"
 #include "mainwindow.h"
-#include "maintab.h"
+#include "tab-widgets/maintab.h"
 #include <QCompleter>
 
 TagWidget::TagWidget(QWidget *parent) : GroupedLineEdit(parent), m_completer(NULL), lastFinishedTag(false)
@@ -25,6 +26,7 @@ TagWidget::TagWidget(QWidget *parent) : GroupedLineEdit(parent), m_completer(NUL
 		addColor(QColor(Qt::green).darker(120));
 		addColor(QColor(Qt::blue).darker(120));
 	} // light text. get a dark background.
+	setTabChangesFocus(true);
 	setFocusPolicy(Qt::StrongFocus);
 }
 
@@ -68,7 +70,8 @@ void TagWidget::highlight()
 {
 	removeAllBlocks();
 	int lastPos = 0;
-	Q_FOREACH (const QString& s, text().split(QChar(','), QString::SkipEmptyParts)) {
+	const auto l = text().split(QChar(','), QString::SkipEmptyParts);
+	for (const QString &s: l) {
 		QString trimmed = s.trimmed();
 		if (trimmed.isEmpty())
 			continue;
@@ -85,14 +88,6 @@ void TagWidget::reparse()
 	QString currentText;
 	if (pos.first >= 0 && pos.second > 0)
 		currentText = text().mid(pos.first, pos.second - pos.first).trimmed();
-
-	/*
-	 * Do not show the completer when not in edit mode - basically
-	 * this returns when we are accepting or discarding the changes.
-	 */
-	if (MainWindow::instance()->information()->isEditing() == false || currentText.length() == 0) {
-		return;
-	}
 
 	if (m_completer) {
 		m_completer->setCompletionPrefix(currentText);
@@ -184,7 +179,7 @@ void TagWidget::keyPressEvent(QKeyEvent *e)
 	  }
 	}
 	if (e->key() == Qt::Key_Tab && lastFinishedTag) {		    // if we already end in comma, go to next/prev field
-		MainWindow::instance()->information()->nextInputField(e);   // by sending the key event to the MainTab widget
+		MainWindow::instance()->mainTab->nextInputField(e);         // by sending the key event to the MainTab widget
 	} else if (e->key() == Qt::Key_Tab || e->key() == Qt::Key_Return) { // otherwise let's pretend this is a comma instead
 		QKeyEvent fakeEvent(e->type(), Qt::Key_Comma, e->modifiers(), QString(","));
 		keyPressEvent(&fakeEvent);
@@ -207,4 +202,12 @@ void TagWidget::fixPopupPosition(int delta)
 		QRect toGlobal = m_completer->popup()->geometry();
 		m_completer->popup()->setGeometry(toGlobal.x(), toGlobal.y() + delta +10, toGlobal.width(), toGlobal.height());
 	}
+}
+
+// Since we capture enter / return / tab, we never send an editingFinished() signal.
+// Therefore, override the focusOutEvent()
+void TagWidget::focusOutEvent(QFocusEvent *ev)
+{
+	GroupedLineEdit::focusOutEvent(ev);
+	emit editingFinished();
 }

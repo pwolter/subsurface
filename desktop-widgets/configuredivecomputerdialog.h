@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef CONFIGUREDIVECOMPUTERDIALOG_H
 #define CONFIGUREDIVECOMPUTERDIALOG_H
 
@@ -25,9 +26,9 @@ public:
 	GasSpinBoxItemDelegate(QObject *parent = 0, column_type type = PERCENT);
 	~GasSpinBoxItemDelegate();
 
-	virtual QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const;
-	virtual void setEditorData(QWidget *editor, const QModelIndex &index) const;
-	virtual void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const;
+	QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+	void setEditorData(QWidget *editor, const QModelIndex &index) const override;
+	void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override;
 
 private:
 	column_type type;
@@ -45,9 +46,9 @@ public:
 	GasTypeComboBoxItemDelegate(QObject *parent = 0, computer_type type = OSTC3);
 	~GasTypeComboBoxItemDelegate();
 
-	virtual QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const;
-	virtual void setEditorData(QWidget *editor, const QModelIndex &index) const;
-	virtual void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const;
+	QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+	void setEditorData(QWidget *editor, const QModelIndex &index) const override;
+	void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override;
 
 private:
 	computer_type type;
@@ -97,25 +98,22 @@ private:
 
 	QString logFile;
 
-	QStringList vendorList;
-	QHash<QString, QStringList> productList;
-
 	ConfigureDiveComputer *config;
 	device_data_t device_data;
 	void getDeviceData();
 
-	QHash<QString, dc_descriptor_t *> descriptorLookup;
-	void fill_device_list(int dc_type);
-	void fill_computer_list();
+	void fill_device_list(unsigned int transport);
 
 	DeviceDetails *deviceDetails;
 	void populateDeviceDetails();
 	void populateDeviceDetailsOSTC3();
 	void populateDeviceDetailsOSTC();
 	void populateDeviceDetailsSuuntoVyper();
+	void populateDeviceDetailsOSTC4();
 	void reloadValuesOSTC3();
 	void reloadValuesOSTC();
 	void reloadValuesSuuntoVyper();
+	void reloadValuesOSTC4();
 
 	QString selected_vendor;
 	QString selected_product;

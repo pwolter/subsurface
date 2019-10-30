@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "desktop-widgets/starwidget.h"
 #include "core/metrics.h"
 #include <QSvgRenderer>
@@ -56,13 +57,12 @@ void StarWidget::mouseReleaseEvent(QMouseEvent *event)
 	else
 		current = starClicked;
 
-	Q_EMIT valueChanged(current);
+	emit valueChanged(current);
 	update();
 }
 
-void StarWidget::paintEvent(QPaintEvent *event)
+void StarWidget::paintEvent(QPaintEvent*)
 {
-	Q_UNUSED(event)
 	QPainter p(this);
 	QImage star = hasFocus() ? focusedImage(starActive()) : starActive();
 	QPixmap selected = QPixmap::fromImage(star);
@@ -88,7 +88,7 @@ void StarWidget::setCurrentStars(int value)
 {
 	current = value;
 	update();
-	Q_EMIT valueChanged(current);
+	emit valueChanged(current);
 }
 
 StarWidget::StarWidget(QWidget *parent, Qt::WindowFlags f) : QWidget(parent, f),
@@ -98,7 +98,7 @@ StarWidget::StarWidget(QWidget *parent, Qt::WindowFlags f) : QWidget(parent, f),
 	int dim = defaultIconMetrics().sz_small;
 
 	if (activeStar.isNull()) {
-		QSvgRenderer render(QString(":star"));
+		QSvgRenderer render(QString(":star-icon"));
 		QPixmap renderedStar(dim, dim);
 
 		renderedStar.fill(Qt::transparent);

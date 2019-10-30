@@ -216,48 +216,9 @@
        </widget>
       </item>
       <item row="2" column="0">
-       <widget class="QCheckBox" name="cloud_background_sync">
-        <property name="text">
-         <string>Sync to cloud in the background?</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1">
        <widget class="QCheckBox" name="save_password_local">
         <property name="text">
          <string>Save Password locally?</string>
-        </property>
-       </widget>
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QGroupBox" name="groupBox_8">
-     <property name="title">
-      <string>Subsurface web service</string>
-     </property>
-     <layout class="QVBoxLayout" name="verticalLayout_7">
-      <property name="spacing">
-       <number>5</number>
-      </property>
-      <property name="margin">
-       <number>5</number>
-      </property>
-      <item>
-       <widget class="QLabel" name="label_16">
-        <property name="text">
-         <string>Default user ID</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLineEdit" name="default_uid"/>
-      </item>
-      <item>
-       <widget class="QCheckBox" name="save_uid_local">
-        <property name="text">
-         <string>Save user ID locally?</string>
         </property>
        </widget>
       </item>

@@ -1,5 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "desktop-widgets/updatemanager.h"
-#include "core/helpers.h"
 #include "core/qthelper.h"
 #include <QtNetwork>
 #include <QMessageBox>
@@ -8,23 +8,21 @@
 #include "core/version.h"
 #include "desktop-widgets/mainwindow.h"
 #include "core/cloudstorage.h"
-#include "core/subsurface-qt/SettingsObjectWrapper.h"
+#include "core/settings/qPrefUpdateManager.h"
 
 UpdateManager::UpdateManager(QObject *parent) :
 	QObject(parent),
 	isAutomaticCheck(false)
 {
-	auto update_settings = SettingsObjectWrapper::instance()->update_manager_settings;
-
-	if (update_settings->dontCheckForUpdates())
+	if (qPrefUpdateManager::dont_check_for_updates())
 		return;
 
-	if (update_settings->lastVersionUsed() == subsurface_git_version() &&
-	    update_settings->nextCheck() > QDate::currentDate())
+	if (qPrefUpdateManager::last_version_used() == subsurface_git_version() &&
+	    qPrefUpdateManager::next_check() > QDate::currentDate())
 		return;
 
-	update_settings->setLastVersionUsed(subsurface_git_version());
-	update_settings->setNextCheck(QDate::currentDate().addDays(14));
+	qPrefUpdateManager::set_last_version_used(subsurface_git_version());
+	qPrefUpdateManager::set_next_check(QDate::currentDate().addDays(14));
 
 	checkForUpdates(true);
 }
@@ -45,7 +43,7 @@ void UpdateManager::checkForUpdates(bool automatic)
 	isAutomaticCheck = automatic;
 	QString version = subsurface_canonical_version();
 	QString uuidString = getUUID();
-	QString url = QString("http://subsurface-divelog.org/updatecheck.html?os=%1&version=%2&uuid=%3").arg(os, version, uuidString);
+	QString url = QString("http://updatecheck.subsurface-divelog.org/updatecheck.html?os=%1&version=%2&uuid=%3").arg(os, version, uuidString);
 	QNetworkRequest request;
 	request.setUrl(url);
 	request.setRawHeader("Accept", "text/xml");
@@ -100,30 +98,29 @@ void UpdateManager::requestReceived()
 			msgbox.setIcon(QMessageBox::Warning);
 		}
 	}
-#ifndef SUBSURFACE_MOBILE
 	if (haveNewVersion || !isAutomaticCheck) {
 		msgbox.setWindowTitle(msgTitle);
-		msgbox.setWindowIcon(QIcon(":/subsurface-icon"));
+		msgbox.setWindowIcon(QIcon(":subsurface-icon"));
 		msgbox.setText(msgText);
 		msgbox.setTextFormat(Qt::RichText);
 		msgbox.exec();
 	}
 	if (isAutomaticCheck) {
-		auto update_settings = SettingsObjectWrapper::instance()->update_manager_settings;
-		if (!update_settings->dontCheckExists()) {
+		auto update_settings = qPrefUpdateManager::instance();
+		if (!update_settings->dont_check_exists()) {
 
 			// we allow an opt out of future checks
 			QMessageBox response(MainWindow::instance());
 			QString message = tr("Subsurface is checking every two weeks if a new version is available. "
-								 "\n If you don't want Subsurface to continue checking, please click Decline.");
+								 "\nIf you don't want Subsurface to continue checking, please click Decline.");
 			response.addButton(tr("Decline"), QMessageBox::RejectRole);
 			response.addButton(tr("Accept"), QMessageBox::AcceptRole);
 			response.setText(message);
 			response.setWindowTitle(tr("Automatic check for updates"));
 			response.setIcon(QMessageBox::Question);
 			response.setWindowModality(Qt::WindowModal);
-			update_settings->setDontCheckForUpdates(response.exec() != QMessageBox::Accepted);
+			update_settings->set_dont_check_for_updates(response.exec() != QMessageBox::Accepted);
+			update_settings->set_dont_check_exists(true);
 		}
 	}
-#endif
 }

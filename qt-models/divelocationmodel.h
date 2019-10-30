@@ -1,42 +1,78 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVELOCATIONMODEL_H
 #define DIVELOCATIONMODEL_H
 
 #include <QAbstractTableModel>
 #include <QStringListModel>
-#include <stdint.h>
+#include <QSortFilterProxyModel>
 #include "core/units.h"
-#include "ssrfsortfilterproxymodel.h"
 
-class QLineEdit;
+#define RECENTLY_ADDED_DIVESITE ((struct dive_site *)~0)
 
-#define RECENTLY_ADDED_DIVESITE 1
-
-bool filter_same_gps_cb (QAbstractItemModel *m, int sourceRow, const QModelIndex& parent);
+struct dive;
+struct dive_trip;
 
 class LocationInformationModel : public QAbstractTableModel {
-Q_OBJECT
+	Q_OBJECT
 public:
-	enum Columns { UUID, NAME, LATITUDE, LONGITUDE, COORDS, DESCRIPTION, NOTES, TAXONOMY_1, TAXONOMY_2, TAXONOMY_3, COLUMNS};
-	enum Roles { UUID_ROLE = Qt::UserRole + 1 };
+	// Common columns, roles and accessor function for all dive-site models.
+	// Thus, different views can connect to different models.
+	enum Columns { EDIT, REMOVE, NAME, DESCRIPTION, NUM_DIVES, LOCATION, NOTES, DIVESITE, TAXONOMY, COLUMNS };
+	enum Roles { DIVESITE_ROLE = Qt::UserRole + 1 };
+	static QVariant getDiveSiteData(const struct dive_site *ds, int column, int role);
+
+	LocationInformationModel(QObject *obj = 0);
 	static LocationInformationModel *instance();
 	int columnCount(const QModelIndex &parent) const;
 	int rowCount(const QModelIndex &parent = QModelIndex()) const;
 	QVariant data(const QModelIndex &index = QModelIndex(), int role = Qt::DisplayRole) const;
-	uint32_t addDiveSite(const QString& name, timestamp_t divetime, int lat = 0, int lon = 0);
-	bool setData(const QModelIndex &index, const QVariant &value, int role);
-	bool removeRows(int row, int count, const QModelIndex & parent = QModelIndex());
-	void setFirstRowTextField(QLineEdit *textField);
+	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+	Qt::ItemFlags flags(const QModelIndex &index) const override;
 
 public slots:
 	void update();
+	void diveSiteDiveCountChanged(struct dive_site *ds);
+	void diveSiteAdded(struct dive_site *ds, int idx);
+	void diveSiteDeleted(struct dive_site *ds, int idx);
+	void diveSiteChanged(struct dive_site *ds, int field);
+	void diveSiteDivesChanged(struct dive_site *ds);
+};
+
+class DiveSiteSortedModel : public QSortFilterProxyModel {
+	Q_OBJECT
 private:
-	LocationInformationModel(QObject *obj = 0);
-	int internalRowCount;
-	QLineEdit *textField;
+	bool filterAcceptsRow(int sourceRow, const QModelIndex &source_parent) const override;
+	bool lessThan(const QModelIndex &i1, const QModelIndex &i2) const override;
+	QString fullText;
+#ifndef SUBSURFACE_MOBILE
+	bool setData(const QModelIndex &index, const QVariant &value, int role) override;
+public slots:
+	void remove(const QModelIndex &index);
+#endif // SUBSURFACE_MOBILE
+public:
+	DiveSiteSortedModel();
+	QStringList allSiteNames() const;
+	void setFilter(const QString &text);
+	struct dive_site *getDiveSite(const QModelIndex &idx);
+};
+
+// To access only divesites at the given GPS coordinates with the exception of a given dive site
+class GPSLocationInformationModel : public QSortFilterProxyModel {
+	Q_OBJECT
+private:
+	const struct dive_site *ignoreDs;
+	location_t location;
+	int64_t distance;
+	bool filterAcceptsRow(int sourceRow, const QModelIndex &source_parent) const override;
+public:
+	GPSLocationInformationModel(QObject *parent = nullptr);
+	void set(const struct dive_site *ignoreDs, const location_t &);
+	void setCoordinates(const location_t &);
+	void setDistance(int64_t dist); // Distance from coordinates in mm
 };
 
 class GeoReferencingOptionsModel : public QStringListModel {
-Q_OBJECT
+	Q_OBJECT
 public:
 	static GeoReferencingOptionsModel *instance();
 private:

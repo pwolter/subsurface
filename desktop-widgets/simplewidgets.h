@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef SIMPLEWIDGETS_H
 #define SIMPLEWIDGETS_H
 
 class MinMaxAvgWidgetPrivate;
 class QAbstractButton;
 class QNetworkReply;
+class FilterModelBase;
 
 #include <QWidget>
 #include <QGroupBox>
@@ -18,19 +20,17 @@ class QNetworkReply;
 #include "ui_urldialog.h"
 #include "ui_divecomponentselection.h"
 #include "ui_listfilter.h"
-#include "ui_filterwidget.h"
 #include "core/exif.h"
 #include "core/dive.h"
 
 
 class MinMaxAvgWidget : public QWidget {
 	Q_OBJECT
-	Q_PROPERTY(double minimum READ minimum WRITE setMinimum)
-	Q_PROPERTY(double maximum READ maximum WRITE setMaximum)
-	Q_PROPERTY(double average READ average WRITE setAverage)
+	QLabel *avgIco, *avgValue;
+	QLabel *minIco, *minValue;
+	QLabel *maxIco, *maxValue;
 public:
 	MinMaxAvgWidget(QWidget *parent);
-	~MinMaxAvgWidget();
 	double minimum() const;
 	double maximum() const;
 	double average() const;
@@ -43,10 +43,8 @@ public:
 	void overrideMinToolTipText(const QString &newTip);
 	void overrideAvgToolTipText(const QString &newTip);
 	void overrideMaxToolTipText(const QString &newTip);
+	void setAvgVisibility(bool visible);
 	void clear();
-
-private:
-	QScopedPointer<MinMaxAvgWidgetPrivate> d;
 };
 
 class RenumberDialog : public QDialog {
@@ -109,11 +107,13 @@ slots:
 	void syncCameraClicked();
 	void dcDateTimeChanged(const QDateTime &);
 	void timeEditChanged(const QTime &time);
+	void timeEditChanged();
 	void updateInvalid();
 	void matchAllImagesToggled(bool);
 
 private:
 	QStringList fileNames;
+	QVector<timestamp_t> timestamps;
 	Ui::ShiftImageTimesDialog ui;
 	time_t m_amount;
 	time_t dcImageEpoch;
@@ -131,31 +131,6 @@ private:
 
 class QCalendarWidget;
 
-class DateWidget : public QWidget {
-	Q_OBJECT
-public:
-	DateWidget(QWidget *parent = 0);
-	QDate date() const;
-public
-slots:
-	void setDate(const QDate &date);
-
-protected:
-	void paintEvent(QPaintEvent *event);
-	void mousePressEvent(QMouseEvent *event);
-	void focusInEvent(QFocusEvent *);
-	void focusOutEvent(QFocusEvent *);
-	void keyPressEvent(QKeyEvent *);
-	void changeEvent(QEvent *);
-	bool eventFilter(QObject *, QEvent *);
-signals:
-	void dateChanged(const QDate &date);
-
-private:
-	QDate mDate;
-	QCalendarWidget *calendarWidget;
-};
-
 class DiveComponentSelection : public QDialog {
 	Q_OBJECT
 public:
@@ -170,74 +145,12 @@ private:
 	struct dive_components *what;
 };
 
-namespace Ui{
-	class FilterWidget2;
-};
-
-class MultiFilter : public QWidget {
-	Q_OBJECT
-public
-slots:
-	void closeFilter();
-	void adjustHeight();
-	void filterFinished();
-
-public:
-	MultiFilter(QWidget *parent);
-	Ui::FilterWidget2 ui;
-};
-
-class TagFilter : public QWidget {
-	Q_OBJECT
-public:
-	TagFilter(QWidget *parent = 0);
-	virtual void showEvent(QShowEvent *);
-	virtual void hideEvent(QHideEvent *);
-
-private:
-	Ui::FilterWidget ui;
-	friend class MultiFilter;
-};
-
-class BuddyFilter : public QWidget {
-	Q_OBJECT
-public:
-	BuddyFilter(QWidget *parent = 0);
-	virtual void showEvent(QShowEvent *);
-	virtual void hideEvent(QHideEvent *);
-
-private:
-	Ui::FilterWidget ui;
-};
-
-class SuitFilter : public QWidget {
-	Q_OBJECT
-public:
-	SuitFilter(QWidget *parent = 0);
-	virtual void showEvent(QShowEvent *);
-	virtual void hideEvent(QHideEvent *);
-
-private:
-	Ui::FilterWidget ui;
-};
-
-class LocationFilter : public QWidget {
-	Q_OBJECT
-public:
-	LocationFilter(QWidget *parent = 0);
-	virtual void showEvent(QShowEvent *);
-	virtual void hideEvent(QHideEvent *);
-
-private:
-	Ui::FilterWidget ui;
-};
-
 class TextHyperlinkEventFilter : public QObject {
 	Q_OBJECT
 public:
 	explicit TextHyperlinkEventFilter(QTextEdit *txtEdit);
 
-	virtual bool eventFilter(QObject *target, QEvent *evt);
+	bool eventFilter(QObject *target, QEvent *evt) override;
 
 private:
 	void handleUrlClick(const QString &urlStr);

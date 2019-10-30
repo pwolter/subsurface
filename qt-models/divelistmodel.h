@@ -1,52 +1,101 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVELISTMODEL_H
 #define DIVELISTMODEL_H
 
 #include <QAbstractListModel>
 #include <QSortFilterProxyModel>
 
-#include "core/dive.h"
-#include "core/helpers.h"
 #include "core/subsurface-qt/DiveObjectHelper.h"
 
 class DiveListSortModel : public QSortFilterProxyModel
 {
 	Q_OBJECT
 public:
-	DiveListSortModel(QObject *parent = 0);
+	static DiveListSortModel *instance();
+	void setSourceModel(QAbstractItemModel *sourceModel);
+	Q_INVOKABLE void reload();
+	Q_INVOKABLE QString tripTitle(const QString &trip);
+	Q_INVOKABLE QString tripShortDate(const QString &trip);
 public slots:
-	int getDiveId(int idx);
 	int getIdxForId(int id);
+	void setFilter(QString f);
+	void resetFilter();
+	int shown();
+protected:
+	bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const;
+private:
+	DiveListSortModel();
+	QString filterString;
+	void updateFilterState();
 };
+
+QString formatSac(const dive *d);
+QString formatNotes(const dive *d);
+QString format_gps_decimal(const dive *d);
+QStringList formatGetCylinder(const dive *d);
+QStringList getStartPressure(const dive *d);
+QStringList getEndPressure(const dive *d);
+QStringList getFirstGas(const dive *d);
+QStringList getFullCylinderList();
 
 class DiveListModel : public QAbstractListModel
 {
 	Q_OBJECT
 public:
-
 	enum DiveListRoles {
-		DiveRole = Qt::UserRole + 1,
-		DiveDateRole
+		DiveDateRole = Qt::UserRole + 1,
+		TripIdRole,
+		TripNrDivesRole,
+		DateTimeRole,
+		IdRole,
+		NumberRole,
+		LocationRole,
+		DepthRole,
+		DurationRole,
+		DepthDurationRole,
+		RatingRole,
+		VizRole,
+		SuitRole,
+		AirTempRole,
+		WaterTempRole,
+		SacRole,
+		SumWeightRole,
+		DiveMasterRole,
+		BuddyRole,
+		NotesRole,
+		GpsDecimalRole,
+		GpsRole,
+		NoDiveRole,
+		DiveSiteRole,
+		CylinderRole,
+		GetCylinderRole,
+		CylinderListRole,
+		SingleWeightRole,
+		StartPressureRole,
+		EndPressureRole,
+		FirstGasRole,
 	};
 
 	static DiveListModel *instance();
-	DiveListModel(QObject *parent = 0);
-	void addDive(QList<dive *> listOfDives);
+	void addDive(const QList<dive *> &listOfDives);
 	void addAllDives();
-	void insertDive(int i, DiveObjectHelper *newDive);
+	void insertDive(int i);
 	void removeDive(int i);
 	void removeDiveById(int id);
 	void updateDive(int i, dive *d);
-	void clear();
+	void reload(); // Only call after clearing the model!
+	struct dive *getDive(int i);
 	int rowCount(const QModelIndex &parent = QModelIndex()) const;
-	int getDiveId(int idx) const;
 	int getDiveIdx(int id) const;
+	QModelIndex getDiveQIdx(int id);
 	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
 	QHash<int, QByteArray> roleNames() const;
 	QString startAddDive();
-	Q_INVOKABLE DiveObjectHelper* at(int i);
+	void resetInternalData();
+	void clear(); // Clear all dives in core
+	Q_INVOKABLE DiveObjectHelper at(int i);
 private:
-	QList<DiveObjectHelper*> m_dives;
-	static DiveListModel *m_instance;
+	DiveListModel();
 };
 
 #endif // DIVELISTMODEL_H

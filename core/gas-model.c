@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* gas-model.c */
 /* gas compressibility model */
 #include <stdio.h>
@@ -5,9 +6,14 @@
 #include "dive.h"
 
 /* "Virial minus one" - the virial cubic form without the initial 1.0 */
-#define virial_m1(C, x1, x2, x3) (C[0]*x1+C[1]*x2+C[2]*x3)
+static double virial_m1(const double coeff[], double x)
+{
+	return x*coeff[0] + x*x*coeff[1] + x*x*x*coeff[2];
+}
 
 /*
+ * Z = pV/nRT
+ *
  * Cubic virial least-square coefficients for O2/N2/He based on data from
  *
  *    PERRY’S CHEMICAL ENGINEERS’ HANDBOOK SEVENTH EDITION
@@ -23,7 +29,7 @@
  * NOTE! Helium coefficients are a linear mix operation between the
  * 323K and one for 273K isotherms, to make everything be at 300K.
  */
-double gas_compressibility_factor(struct gasmix *gas, double bar)
+double gas_compressibility_factor(struct gasmix gas, double bar)
 {
 	static const double o2_coefficients[3] = {
 		-7.18092073703e-04,
@@ -41,17 +47,22 @@ double gas_compressibility_factor(struct gasmix *gas, double bar)
 		+5.33304543646e-11
 	};
 	int o2, he;
-	double x1, x2, x3;
 	double Z;
+
+	/*
+	 * The curve fitting range is only [0,500] bar.
+	 * Anything else is way out of range for cylinder
+	 * pressures.
+	 */
+	if (bar < 0) bar = 0;
+	if (bar > 500) bar = 500;
 
 	o2 = get_o2(gas);
 	he = get_he(gas);
 
-	x1 = bar; x2 = x1*x1; x3 = x2*x1;
-
-	Z = virial_m1(o2_coefficients, x1, x2, x3) * o2 +
-	    virial_m1(he_coefficients, x1, x2, x3) * he +
-	    virial_m1(n2_coefficients, x1, x2, x3) * (1000 - o2 - he);
+	Z = virial_m1(o2_coefficients, bar) * o2 +
+	    virial_m1(he_coefficients, bar) * he +
+	    virial_m1(n2_coefficients, bar) * (1000 - o2 - he);
 
 	/*
 	 * We add the 1.0 at the very end - the linear mixing of the
@@ -66,9 +77,16 @@ double gas_compressibility_factor(struct gasmix *gas, double bar)
 /* Compute the new pressure when compressing (expanding) volome v1 at pressure p1 bar to volume v2
  * taking into account the compressebility (to first order) */
 
-double isothermal_pressure(struct gasmix *gas, double p1, int volume1, int volume2)
+double isothermal_pressure(struct gasmix gas, double p1, int volume1, int volume2)
 {
 	double p_ideal = p1 * volume1 / volume2 / gas_compressibility_factor(gas, p1);
 
 	return p_ideal * gas_compressibility_factor(gas, p_ideal);
+}
+
+double gas_density(struct gasmix gas, int pressure)
+{
+	int density =  gas.he.permille * HE_DENSITY + gas.o2.permille * O2_DENSITY + (1000 - gas.he.permille - gas.o2.permille) * N2_DENSITY;
+
+	return density * (double) pressure / gas_compressibility_factor(gas, pressure / 1000.0) / SURFACE_PRESSURE / 1000000.0;
 }

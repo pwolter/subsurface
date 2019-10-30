@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PRINTER_H
 #define PRINTER_H
 
 #include <QPrinter>
-#ifdef USE_WEBENGINE
-#include <QWebEngineView>
-#else
 #include <QWebView>
-#endif
 #include <QRect>
 #include <QPainter>
 
@@ -24,11 +21,7 @@ public:
 
 private:
 	QPaintDevice *paintDevice;
-#ifdef USE_WEBENGINE
-	QWebEngineView *webView;
-#else
 	QWebView *webView;
-#endif
 	print_options *printOptions;
 	template_options *templateOptions;
 	QSize pageSize;
@@ -47,6 +40,7 @@ public:
 	~Printer();
 	void print();
 	void previewOnePage();
+	QString exportHtml();
 
 signals:
 	void progessUpdated(int value);

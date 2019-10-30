@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef CLOUD_STORAGE_H
 #define CLOUD_STORAGE_H
 
@@ -15,12 +16,12 @@ signals:
 private
 slots:
 	void uploadError(QNetworkReply::NetworkError error);
-	void sslErrors(QList<QSslError> errorList);
+	void sslErrors(const QList<QSslError> &errorList);
 	void uploadFinished();
 private:
 	QNetworkReply *reply;
 	QString userAgent;
-	bool verbose;
+	QString cloudNewPassword;
 };
 
 QNetworkAccessManager *manager();

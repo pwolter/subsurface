@@ -1,18 +1,43 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "desktop-widgets/divelogimportdialog.h"
 #include "desktop-widgets/mainwindow.h"
+#include "desktop-widgets/command.h"
 #include "core/color.h"
 #include "ui_divelogimportdialog.h"
 #include <QShortcut>
 #include <QDrag>
 #include <QMimeData>
 #include <QRegExp>
+#include <QUndoStack>
+#include <QPainter>
+#include "core/qthelper.h"
+#include "core/divesite.h"
+#include "core/trip.h"
+#include "core/import-csv.h"
 
 static QString subsurface_mimedata = "subsurface/csvcolumns";
 static QString subsurface_index = "subsurface/csvindex";
 
 #define SILENCE_WARNING 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ""
 
-const DiveLogImportDialog::CSVAppConfig DiveLogImportDialog::CSVApps[CSVAPPS] = {
+struct CSVAppConfig {
+	QString name;
+	int time;
+	int depth;
+	int temperature;
+	int po2;
+	int sensor1;
+	int sensor2;
+	int sensor3;
+	int cns;
+	int ndl;
+	int tts;
+	int stopdepth;
+	int pressure;
+	int setpoint;
+	QString separator;
+};
+static const CSVAppConfig CSVApps[] = {
 	// time, depth, temperature, po2, sensor1, sensor2, sensor3, cns, ndl, tts, stopdepth, pressure, setpoint
 	// indices are 0 based, -1 means the column doesn't exist
 	{ "Manual import", SILENCE_WARNING },
@@ -24,7 +49,7 @@ const DiveLogImportDialog::CSVAppConfig DiveLogImportDialog::CSVApps[CSVAPPS] = 
 	{ "Seabear CSV", 0, 1, 5, -1, -1, -1, -1, -1, 2, 3, 4, 6, -1, ";" },
 	{ "SubsurfaceCSV", -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, "Tab" },
 	{ "AV1", 0, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, " " },
-	{ NULL, SILENCE_WARNING }
+	{ "Poseidon MkVI", 0, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, "," },
 };
 
 enum Known {
@@ -36,7 +61,8 @@ enum Known {
 	SENSUS,
 	SEABEAR,
 	SUBSURFACE,
-	AV1
+	AV1,
+	POSEIDON
 };
 
 ColumnNameProvider::ColumnNameProvider(QObject *parent) : QAbstractListModel(parent)
@@ -46,23 +72,19 @@ ColumnNameProvider::ColumnNameProvider(QObject *parent) : QAbstractListModel(par
 		       tr("O₂") << tr("He") << tr("Sample time") << tr("Sample depth") << tr("Sample temperature") << tr("Sample pO₂") << tr("Sample CNS") << tr("Sample NDL") <<
 		       tr("Sample TTS") << tr("Sample stopdepth") << tr("Sample pressure") <<
 		       tr("Sample sensor1 pO₂") << tr("Sample sensor2 pO₂") << tr("Sample sensor3 pO₂") <<
-		       tr("Sample setpoint");
+		       tr("Sample setpoint") << tr("Visibility") << tr("Rating") << tr("Sample heartrate");
 }
 
-bool ColumnNameProvider::insertRows(int row, int count, const QModelIndex &parent)
+bool ColumnNameProvider::insertRows(int row, int, const QModelIndex&)
 {
-	Q_UNUSED(count)
-	Q_UNUSED(parent)
 	beginInsertRows(QModelIndex(), row, row);
 	columnNames.append(QString());
 	endInsertRows();
 	return true;
 }
 
-bool ColumnNameProvider::removeRows(int row, int count, const QModelIndex &parent)
+bool ColumnNameProvider::removeRows(int row, int, const QModelIndex&)
 {
-	Q_UNUSED(count)
-	Q_UNUSED(parent)
 	beginRemoveRows(QModelIndex(), row, row);
 	columnNames.removeAt(row);
 	endRemoveRows();
@@ -88,16 +110,17 @@ QVariant ColumnNameProvider::data(const QModelIndex &index, int role) const
 	return QVariant(columnNames[index.row()]);
 }
 
-int ColumnNameProvider::rowCount(const QModelIndex &parent) const
+int ColumnNameProvider::rowCount(const QModelIndex&) const
 {
-	Q_UNUSED(parent)
 	return columnNames.count();
 }
 
 int ColumnNameProvider::mymatch(QString value) const
 {
 	QString searchString = value.toLower();
-	searchString.replace("\"", "").replace(" ", "").replace(".", "").replace("\n","");
+	QRegExp re(" \\(.*\\)");
+
+	searchString.replace("\"", "").replace(re, "").replace(" ", "").replace(".", "").replace("\n","");
 	for (int i = 0; i < columnNames.count(); i++) {
 		QString name = columnNames.at(i).toLower();
 		name.replace("\"", "").replace(" ", "").replace(".", "").replace("\n","");
@@ -107,11 +130,8 @@ int ColumnNameProvider::mymatch(QString value) const
 	return -1;
 }
 
-
-
-ColumnNameView::ColumnNameView(QWidget *parent)
+ColumnNameView::ColumnNameView(QWidget*)
 {
-	Q_UNUSED(parent)
 	setAcceptDrops(true);
 	setDragEnabled(true);
 }
@@ -140,9 +160,8 @@ void ColumnNameView::mousePressEvent(QMouseEvent *press)
 	}
 }
 
-void ColumnNameView::dragLeaveEvent(QDragLeaveEvent *leave)
+void ColumnNameView::dragLeaveEvent(QDragLeaveEvent*)
 {
-	Q_UNUSED(leave);
 }
 
 void ColumnNameView::dragEnterEvent(QDragEnterEvent *event)
@@ -171,15 +190,13 @@ void ColumnNameView::dropEvent(QDropEvent *event)
 	}
 }
 
-ColumnDropCSVView::ColumnDropCSVView(QWidget *parent)
+ColumnDropCSVView::ColumnDropCSVView(QWidget*)
 {
-	Q_UNUSED(parent)
 	setAcceptDrops(true);
 }
 
-void ColumnDropCSVView::dragLeaveEvent(QDragLeaveEvent *leave)
+void ColumnDropCSVView::dragLeaveEvent(QDragLeaveEvent*)
 {
-	Q_UNUSED(leave);
 }
 
 void ColumnDropCSVView::dragEnterEvent(QDragEnterEvent *event)
@@ -226,7 +243,8 @@ ColumnNameResult::ColumnNameResult(QObject *parent) : QAbstractTableModel(parent
 
 }
 
-void ColumnNameResult::swapValues(int firstIndex, int secondIndex) {
+void ColumnNameResult::swapValues(int firstIndex, int secondIndex)
+{
 	QString one = columnNames[firstIndex];
 	QString two = columnNames[secondIndex];
 	setData(index(0, firstIndex), QVariant(two), Qt::EditRole);
@@ -257,7 +275,7 @@ QVariant ColumnNameResult::data(const QModelIndex &index, int role) const
 		return QVariant();
 
 	if (index.row() == 0) {
-		return (columnNames[index.column()]);
+		return columnNames[index.column()];
 	}
 	// make sure the element exists before returning it - this might get called before the
 	// model is correctly set up again (e.g., when changing separators)
@@ -267,15 +285,13 @@ QVariant ColumnNameResult::data(const QModelIndex &index, int role) const
 		return QVariant();
 }
 
-int ColumnNameResult::rowCount(const QModelIndex &parent) const
+int ColumnNameResult::rowCount(const QModelIndex&) const
 {
-	Q_UNUSED(parent);
 	return columnValues.count() + 1; // +1 == the header.
 }
 
-int ColumnNameResult::columnCount(const QModelIndex &parent) const
+int ColumnNameResult::columnCount(const QModelIndex&) const
 {
-	Q_UNUSED(parent);
 	return columnNames.count();
 }
 
@@ -323,7 +339,7 @@ void ColumnDropCSVView::mousePressEvent(QMouseEvent *press)
 	QDrag *drag = new QDrag(this);
 	QMimeData *mimeData = new QMimeData;
 	mimeData->setData(subsurface_mimedata, atClick.data().toByteArray());
-	mimeData->setData(subsurface_index, QString::number(atClick.column()).toLocal8Bit());
+	mimeData->setData(subsurface_index, QString::number(atClick.column()).toUtf8());
 	drag->setPixmap(pix);
 	drag->setMimeData(mimeData);
 	if (drag->exec() != Qt::IgnoreAction){
@@ -351,9 +367,10 @@ DiveLogImportDialog::DiveLogImportDialog(QStringList fn, QWidget *parent) : QDia
 	specialCSV << SUBSURFACE;
 	specialCSV << DL7;
 	specialCSV << AV1;
+	specialCSV << POSEIDON;
 
-	for (int i = 0; !CSVApps[i].name.isNull(); ++i)
-		ui->knownImports->addItem(CSVApps[i].name);
+	for (const CSVAppConfig &conf: CSVApps)
+		ui->knownImports->addItem(conf.name);
 
 	ui->CSVSeparator->addItems( QStringList() << tr("Tab") << "," << ";" << "|");
 
@@ -384,9 +401,24 @@ void DiveLogImportDialog::loadFileContentsKnownTypesSelected(int value)
 	loadFileContents(value, KNOWNTYPES);
 }
 
+// Turn a "*.csv" or "*.txt" filename into a pair of both, "*.csv" and "*.txt".
+// If the input wasn't either "*.csv" or "*.txt", then both returned strings
+// are empty
+static QPair<QString, QString> poseidonFileNames(const QString &fn)
+{
+	if (fn.endsWith(".csv", Qt::CaseInsensitive)) {
+		QString txt = fn.left(fn.size() - 3) + "txt";
+		return { fn, txt };
+	} else if (fn.endsWith(".txt", Qt::CaseInsensitive)) {
+		QString csv = fn.left(fn.size() - 3) + "csv";
+		return { csv, fn };
+	} else {
+		return { QString(), QString() };
+	}
+}
+
 void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 {
-	QFile f(fileNames.first());
 	QList<QStringList> fileColumns;
 	QStringList currColumns;
 	QStringList headers;
@@ -395,6 +427,7 @@ void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 	bool xp5 = false;
 	bool apd = false;
 	bool dl7 = false;
+	bool poseidon = false;
 
 	// reset everything
 	ColumnNameProvider *provider = new ColumnNameProvider(this);
@@ -403,6 +436,26 @@ void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 	resultModel = new ColumnNameResult(this);
 	ui->tableView->setModel(resultModel);
 
+	// Poseidon MkVI is special: it is made up of a .csv *and* a .txt file.
+	// If the user specified one, we'll try to check for the other.
+	QString fileName = fileNames.first();
+	QPair<QString, QString> pair = poseidonFileNames(fileName);
+	if (!pair.second.isEmpty()) {
+		QFile f_txt(pair.second);
+		f_txt.open(QFile::ReadOnly);
+		QString firstLine = f_txt.readLine();
+		if (firstLine.startsWith("MkVI_Config ")) {
+			poseidon = true;
+			fileName = pair.first; // Read data from CSV
+			headers.append("Time");
+			headers.append("Depth");
+			blockSignals(true);
+			ui->knownImports->setCurrentText("Poseidon MkVI");
+			blockSignals(false);
+		}
+	}
+
+	QFile f(fileName);
 	f.open(QFile::ReadOnly);
 	QString firstLine = f.readLine();
 	if (firstLine.contains("SEABEAR")) {
@@ -480,9 +533,9 @@ void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 		QString units = "Metric";
 		dl7 = true;
 		while ((firstLine = f.readLine().trimmed()).length() > 0 && !f.atEnd()) {
-			/* DL7 actually defines individual units (e.g.  depth, temp, pressure, etc.)
-			 * and there are quite a few other options as well, but let's use metric
-			 * unless depth unit is clearly Imperial. */
+			/* DL7 actually defines individual units (e.g. depth, temperature,
+			 * pressure, etc.) and there are quite a few other options as well,
+			 * but let's use metric unless depth unit is clearly Imperial. */
 
 			if (firstLine.contains("ThFt")) {
 				units = "Imperial";
@@ -503,10 +556,7 @@ void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 			}
 		}
 		firstLine = f.readLine().trimmed();
-
 	}
-
-
 
 	// Special handling for APD Log Viewer
 	if ((triggeredBy == KNOWNTYPES && (value == APD || value == APD2)) || (triggeredBy == INITIAL && fileNames.first().endsWith(".apd", Qt::CaseInsensitive))) {
@@ -732,22 +782,21 @@ void DiveLogImportDialog::loadFileContents(int value, whatChanged triggeredBy)
 	while (rows < 10 && !f.atEnd()) {
 		QString currLine = f.readLine().trimmed();
 		currColumns = currLine.split(separator);
+		// For Poseidon, read only columns where the second value is 8 (=depth)
+		if (poseidon) {
+			if (currColumns.size() < 3 || currColumns[1] != "8")
+				continue;
+			currColumns.removeAt(1);
+		}
 		fileColumns.append(currColumns);
 		rows += 1;
 	}
-	resultModel->setColumnValues(fileColumns);
+
+	if (rows > 0)
+		resultModel->setColumnValues(fileColumns);
 	for (int i = 0; i < headers.count(); i++)
 		if (!headers.at(i).isEmpty())
 			resultModel->setData(resultModel->index(0, i),headers.at(i),Qt::EditRole);
-}
-
-char *intdup(int index)
-{
-	char tmpbuf[21];
-
-	snprintf(tmpbuf, sizeof(tmpbuf) - 2, "%d", index);
-	tmpbuf[20] = 0;
-	return strdup(tmpbuf);
 }
 
 int DiveLogImportDialog::setup_csv_params(QStringList r, char **params, int pnr)
@@ -784,18 +833,24 @@ int DiveLogImportDialog::setup_csv_params(QStringList r, char **params, int pnr)
 	params[pnr++] = intdup(r.indexOf(tr("Sample stopdepth")));
 	params[pnr++] = strdup("pressureField");
 	params[pnr++] = intdup(r.indexOf(tr("Sample pressure")));
-	params[pnr++] = strdup("setpointFiend");
+	params[pnr++] = strdup("heartBeat");
+	params[pnr++] = intdup(r.indexOf(tr("Sample heartrate")));
+	params[pnr++] = strdup("setpointField");
 	params[pnr++] = intdup(r.indexOf(tr("Sample setpoint")));
+	params[pnr++] = strdup("visibilityField");
+	params[pnr++] = intdup(r.indexOf(tr("Visibility")));
+	params[pnr++] = strdup("ratingField");
+	params[pnr++] = intdup(r.indexOf(tr("Rating")));
 	params[pnr++] = strdup("separatorIndex");
 	params[pnr++] = intdup(ui->CSVSeparator->currentIndex());
 	params[pnr++] = strdup("units");
 	params[pnr++] = intdup(ui->CSVUnits->currentIndex());
 	if (hw.length()) {
 		params[pnr++] = strdup("hw");
-		params[pnr++] = strdup(hw.toUtf8().data());
+		params[pnr++] = copy_qstring(hw);
 	} else if (ui->knownImports->currentText().length() > 0) {
 		params[pnr++] = strdup("hw");
-		params[pnr++] = strdup(ui->knownImports->currentText().prepend("\"").append("\"").toUtf8().data());
+		params[pnr++] = copy_qstring(ui->knownImports->currentText().prepend("\"").append("\""));
 	}
 	params[pnr++] = NULL;
 
@@ -849,64 +904,19 @@ int DiveLogImportDialog::parseTxtHeader(QString fileName, char **params, int pnr
 
 void DiveLogImportDialog::on_buttonBox_accepted()
 {
+	struct dive_table table = { 0 };
+	struct trip_table trips = { 0 };
+	struct dive_site_table sites = { 0 };
 	QStringList r = resultModel->result();
 	if (ui->knownImports->currentText() != "Manual import") {
 		for (int i = 0; i < fileNames.size(); ++i) {
 			if (ui->knownImports->currentText() == "Seabear CSV") {
-				char *params[40];
-				int pnr = 0;
-
-				params[pnr++] = strdup("timeField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample time")));
-				params[pnr++] = strdup("depthField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample depth")));
-				params[pnr++] = strdup("tempField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample temperature")));
-				params[pnr++] = strdup("po2Field");
-				params[pnr++] = intdup(r.indexOf(tr("Sample pO₂")));
-				params[pnr++] = strdup("o2sensor1Field");
-				params[pnr++] = intdup(r.indexOf(tr("Sample sensor1 pO₂")));
-				params[pnr++] = strdup("o2sensor2Field");
-				params[pnr++] = intdup(r.indexOf(tr("Sample sensor2 pO₂")));
-				params[pnr++] = strdup("o2sensor3Field");
-				params[pnr++] = intdup(r.indexOf(tr("Sample sensor3 pO₂")));
-				params[pnr++] = strdup("cnsField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample CNS")));
-				params[pnr++] = strdup("ndlField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample NDL")));
-				params[pnr++] = strdup("ttsField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample TTS")));
-				params[pnr++] = strdup("stopdepthField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample stopdepth")));
-				params[pnr++] = strdup("pressureField");
-				params[pnr++] = intdup(r.indexOf(tr("Sample pressure")));
-				params[pnr++] = strdup("setpointFiend");
-				params[pnr++] = intdup(-1);
-				params[pnr++] = strdup("separatorIndex");
-				params[pnr++] = intdup(ui->CSVSeparator->currentIndex());
-				params[pnr++] = strdup("units");
-				params[pnr++] = intdup(ui->CSVUnits->currentIndex());
-				params[pnr++] = strdup("delta");
-				params[pnr++] = strdup(delta.toUtf8().data());
-				if (hw.length()) {
-					params[pnr++] = strdup("hw");
-					params[pnr++] = strdup(hw.toUtf8().data());
-				}
-				params[pnr++] = NULL;
-
-				if (parse_seabear_csv_file(fileNames[i].toUtf8().data(),
-							params, pnr - 1, "csv") < 0) {
-					return;
-				}
-				// Seabear CSV stores NDL and TTS in Minutes, not seconds
-				struct dive *dive = dive_table.dives[dive_table.nr - 1];
-				for(int s_nr = 0 ; s_nr < dive->dc.samples ; s_nr++) {
-					struct sample *sample = dive->dc.sample + s_nr;
-					sample->ndl.seconds *= 60;
-					sample->tts.seconds *= 60;
-				}
+				parse_seabear_log(qPrintable(fileNames[i]), &table, &trips, &sites);
+			} else if (ui->knownImports->currentText() == "Poseidon MkVI") {
+				QPair<QString, QString> pair = poseidonFileNames(fileNames[i]);
+				parse_txt_file(qPrintable(pair.second), qPrintable(pair.first), &table, &trips, &sites);
 			} else {
-				char *params[49];
+				char *params[50];
 				int pnr = 0;
 
 				QRegExp apdRe("^.*[/\\][0-9a-zA-Z]*_([0-9]{6})_([0-9]{6})\\.apd");
@@ -919,14 +929,15 @@ void DiveLogImportDialog::on_buttonBox_accepted()
 					params[pnr++] = strdup("1" + apdRe.cap(2).toLatin1());
 				}
 				pnr = setup_csv_params(r, params, pnr);
-				parse_csv_file(fileNames[i].toUtf8().data(), params, pnr - 1,
-						specialCSV.contains(ui->knownImports->currentIndex()) ? CSVApps[ui->knownImports->currentIndex()].name.toUtf8().data() : "csv");
+				parse_csv_file(qPrintable(fileNames[i]), params, pnr - 1,
+						specialCSV.contains(ui->knownImports->currentIndex()) ? qPrintable(CSVApps[ui->knownImports->currentIndex()].name) : "csv",
+						&table, &trips, &sites);
 			}
 		}
 	} else {
 		for (int i = 0; i < fileNames.size(); ++i) {
 			if (r.indexOf(tr("Sample time")) < 0) {
-				char *params[55];
+				char *params[59];
 				int pnr = 0;
 				params[pnr++] = strdup("numberField");
 				params[pnr++] = intdup(r.indexOf(tr("Dive #")));
@@ -978,11 +989,15 @@ void DiveLogImportDialog::on_buttonBox_accepted()
 				params[pnr++] = intdup(r.indexOf(tr("Air temp.")));
 				params[pnr++] = strdup("watertempField");
 				params[pnr++] = intdup(r.indexOf(tr("Water temp.")));
+				params[pnr++] = strdup("visibilityField");
+				params[pnr++] = intdup(r.indexOf(tr("Visibility")));
+				params[pnr++] = strdup("ratingField");
+				params[pnr++] = intdup(r.indexOf(tr("Rating")));
 				params[pnr++] = NULL;
 
-				parse_manual_file(fileNames[i].toUtf8().data(), params, pnr - 1);
+				parse_manual_file(qPrintable(fileNames[i]), params, pnr - 1, &table, &trips, &sites);
 			} else {
-				char *params[49];
+				char *params[53];
 				int pnr = 0;
 
 				QRegExp apdRe("^.*[/\\][0-9a-zA-Z]*_([0-9]{6})_([0-9]{6})\\.apd");
@@ -995,21 +1010,22 @@ void DiveLogImportDialog::on_buttonBox_accepted()
 					params[pnr++] = strdup("1" + apdRe.cap(2).toLatin1());
 				}
 				pnr = setup_csv_params(r, params, pnr);
-				parse_csv_file(fileNames[i].toUtf8().data(), params, pnr - 1,
-						specialCSV.contains(ui->knownImports->currentIndex()) ? CSVApps[ui->knownImports->currentIndex()].name.toUtf8().data() : "csv");
+				parse_csv_file(qPrintable(fileNames[i]), params, pnr - 1,
+						specialCSV.contains(ui->knownImports->currentIndex()) ? qPrintable(CSVApps[ui->knownImports->currentIndex()].name) : "csv",
+						&table, &trips, &sites);
 			}
 		}
 	}
 
-	process_dives(true, false);
-	MainWindow::instance()->refreshDisplay();
+	QString source = fileNames.size() == 1 ? fileNames[0] : tr("multiple files");
+	Command::importDives(&table, &trips, &sites, IMPORT_MERGE_ALL_TRIPS, source);
 }
 
 TagDragDelegate::TagDragDelegate(QObject *parent) : QStyledItemDelegate(parent)
 {
 }
 
-QSize	TagDragDelegate::sizeHint(const QStyleOptionViewItem & option, const QModelIndex & index) const
+QSize TagDragDelegate::sizeHint(const QStyleOptionViewItem & option, const QModelIndex & index) const
 {
 	QSize originalSize = QStyledItemDelegate::sizeHint(option, index);
 	return originalSize + QSize(5,5);

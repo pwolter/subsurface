@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "profile-widget/divetooltipitem.h"
 #include "profile-widget/divecartesianaxis.h"
-#include "core/dive.h"
 #include "core/profile.h"
 #include "core/membuffer.h"
 #include "core/metrics.h"
+#include "core/settings/qPrefDisplay.h"
 #include <QPropertyAnimation>
-#include <QSettings>
 #include <QGraphicsView>
 #include <QStyleOptionGraphicsItem>
 #include "core/qthelper.h"
@@ -61,7 +61,7 @@ void ToolTipItem::collapse()
 {
 	int dim = defaultIconMetrics().sz_small;
 
-	if (prefs.animation_speed) {
+	if (qPrefDisplay::animation_speed()) {
 		QPropertyAnimation *animation = new QPropertyAnimation(this, "rect");
 		animation->setDuration(100);
 		animation->setStartValue(nextRectangle);
@@ -108,7 +108,7 @@ void ToolTipItem::expand()
 		width = title->boundingRect().width() + sp2;
 	// clip the height
 	if (entryToolTip.first) {
-		const int minH = entryToolTip.first->y() + entryToolTip.first->pixmap().height() + sp2;
+		const int minH = lrint(entryToolTip.first->y() + entryToolTip.first->pixmap().height() + sp2);
 		if (height < minH)
 			height = minH;
 	} else if (height < iconMetrics.sz_small) {
@@ -119,7 +119,7 @@ void ToolTipItem::expand()
 	nextRectangle.setHeight(height);
 
 	if (nextRectangle != rect()) {
-		if (prefs.animation_speed) {
+		if (qPrefDisplay::animation_speed()) {
 			QPropertyAnimation *animation = new QPropertyAnimation(this, "rect", this);
 			animation->setDuration(prefs.animation_speed);
 			animation->setStartValue(rect());
@@ -194,9 +194,8 @@ void ToolTipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
 	}
 }
 
-void ToolTipItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget)
+void ToolTipItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget*)
 {
-	Q_UNUSED(widget);
 	painter->save();
 	painter->setClipRect(option->rect);
 	painter->setPen(pen());
@@ -207,17 +206,12 @@ void ToolTipItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *optio
 
 void ToolTipItem::persistPos()
 {
-	QSettings s;
-	s.beginGroup("ProfileMap");
-	s.setValue("tooltip_position", pos());
-	s.endGroup();
+	qPrefDisplay::set_tooltip_position(pos());
 }
 
 void ToolTipItem::readPos()
 {
-	QSettings s;
-	s.beginGroup("ProfileMap");
-	QPointF value = s.value("tooltip_position").toPoint();
+	QPointF value = qPrefDisplay::tooltip_position();
 	if (!scene()->sceneRect().contains(value)) {
 		value = QPointF(0, 0);
 	}
@@ -245,9 +239,7 @@ void ToolTipItem::refresh(const QPointF &pos)
 		return;
 	refreshTime.start();
 
-	int time = timeAxis->valueAt(pos);
-	if (time == lastTime)
-		return;
+	int time = lrint(timeAxis->valueAt(pos));
 
 	lastTime = time;
 	clear();
@@ -269,9 +261,9 @@ void ToolTipItem::refresh(const QPointF &pos)
 
 		painter.setPen(QColor(0, 0, 0, 255));
 		if (decoMode() == BUEHLMANN)
-			painter.drawLine(0, 60 - entry->gfline / 2, 16, 60 - entry->gfline / 2);
-		painter.drawLine(0, 60 - AMB_PERCENTAGE * (entry->pressures.n2 + entry->pressures.he) / entry->ambpressure / 2,
-				16, 60 - AMB_PERCENTAGE * (entry->pressures.n2 + entry->pressures.he) / entry->ambpressure /2);
+			painter.drawLine(0, lrint(60 - entry->gfline / 2), 16, lrint(60 - entry->gfline / 2));
+		painter.drawLine(0, lrint(60 - AMB_PERCENTAGE * (entry->pressures.n2 + entry->pressures.he) / entry->ambpressure / 2),
+				16, lrint(60 - AMB_PERCENTAGE * (entry->pressures.n2 + entry->pressures.he) / entry->ambpressure /2));
 		painter.setPen(QColor(0, 0, 0, 127));
 		for (int i=0; i<16; i++) {
 			painter.drawLine(i, 60, i, 60 - entry->percentages[i] / 2);
@@ -280,8 +272,9 @@ void ToolTipItem::refresh(const QPointF &pos)
 	}
 	entryToolTip.first->setPixmap(tissues);
 
-	Q_FOREACH (QGraphicsItem *item, scene()->items(pos, Qt::IntersectsItemBoundingRect
-		,Qt::DescendingOrder, scene()->views().first()->transform())) {
+	const auto l = scene()->items(pos, Qt::IntersectsItemBoundingRect, Qt::DescendingOrder,
+			scene()->views().first()->transform());
+	for (QGraphicsItem *item: l) {
 		if (!item->toolTip().isEmpty())
 			addToolTip(item->toolTip());
 	}

@@ -14,12 +14,14 @@ IF ( LIBDIVECOMPUTER_INCLUDE_DIR AND LIBDIVECOMPUTER_LIBRARIES )
 ENDIF ( LIBDIVECOMPUTER_INCLUDE_DIR AND LIBDIVECOMPUTER_LIBRARIES )
 
 FIND_PATH( LIBDIVECOMPUTER_INCLUDE_DIR
-NAMES libdivecomputer/hw.h
+NAMES
+    libdivecomputer/device.h
+    libdivecomputer/descriptor.h
 HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../install-root/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libdivecomputer/include/
-    /usr/local/include
-    /usr/include
+PATHS
+    /opt/out/include
 )
 
 FIND_LIBRARY( LIBDIVECOMPUTER_LIBRARIES
@@ -29,8 +31,8 @@ NAMES
 HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../install-root/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/../libdivecomputer/src/.libs/
-    /usr/local/include
-    /usr/include
+PATHS
+    /opt/out/lib
 )
 
 INCLUDE( FindPackageHandleStandardArgs )

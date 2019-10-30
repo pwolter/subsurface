@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "profile-widget/divecartesianaxis.h"
 #include "profile-widget/divetextitem.h"
-#include "core/helpers.h"
-#include "core/subsurface-qt/SettingsObjectWrapper.h"
+#include "core/qthelper.h"
+#include "core/subsurface-string.h"
 #ifndef SUBSURFACE_MOBILE
 #include "desktop-widgets/preferences/preferencesdialog.h"
 #endif
@@ -20,16 +21,6 @@ QPen DiveCartesianAxis::gridPen()
 	pen.setWidth(DiveCartesianAxis::printMode ? 0 : 2);
 	pen.setCosmetic(true);
 	return pen;
-}
-
-double DiveCartesianAxis::tickInterval() const
-{
-	return interval;
-}
-
-double DiveCartesianAxis::tickSize() const
-{
-	return tick_size;
 }
 
 void DiveCartesianAxis::setFontLabelScale(qreal scale)
@@ -107,9 +98,8 @@ void DiveCartesianAxis::setOrientation(Orientation o)
 	changed = true;
 }
 
-QColor DiveCartesianAxis::colorForValue(double value)
+QColor DiveCartesianAxis::colorForValue(double)
 {
-	Q_UNUSED(value)
 	return QColor(Qt::black);
 }
 
@@ -136,35 +126,34 @@ void DiveCartesianAxis::setLinesVisible(bool arg1)
 }
 
 template <typename T>
-void emptyList(QList<T *> &list, double steps)
+void emptyList(QList<T *> &list, int steps, int speed)
 {
-	if (!list.isEmpty() && list.size() > steps) {
-		while (list.size() > steps) {
-			T *removedItem = list.takeLast();
-			Animations::animDelete(removedItem);
-		}
+	while (list.size() > steps) {
+		T *removedItem = list.takeLast();
+		Animations::animDelete(removedItem, speed);
 	}
 }
 
-void DiveCartesianAxis::updateTicks(color_indice_t color)
+void DiveCartesianAxis::updateTicks(color_index_t color)
 {
 	if (!scene() || (!changed && !profileWidget->getPrintMode()))
 		return;
 	QLineF m = line();
 	// unused so far:
 	// QGraphicsView *view = scene()->views().first();
-	double steps = (max - min) / interval;
+	double stepsInRange = (max - min) / interval;
+	int steps = (int)stepsInRange;
 	double currValueText = min;
 	double currValueLine = min;
 
 	if (steps < 1)
 		return;
 
-	emptyList(labels, steps);
-	emptyList(lines, steps);
+	emptyList(labels, steps, profileWidget->animSpeed);
+	emptyList(lines, steps, profileWidget->animSpeed);
 
-	// Move the remaining Ticks / Text to it's corerct position
-	// Regartind the possibly new values for the Axis
+	// Move the remaining ticks / text to their correct positions
+	// regarding the possible new values for the axis
 	qreal begin, stepSize;
 	if (orientation == TopToBottom) {
 		begin = m.y1();
@@ -179,7 +168,7 @@ void DiveCartesianAxis::updateTicks(color_indice_t color)
 		begin = m.x2();
 		stepSize = (m.x2() - m.x1());
 	}
-	stepSize = stepSize / steps;
+	stepSize /= stepsInRange;
 
 	for (int i = 0, count = labels.size(); i < count; i++, currValueText += interval) {
 		qreal childPos = (orientation == TopToBottom || orientation == LeftToRight) ?
@@ -188,9 +177,9 @@ void DiveCartesianAxis::updateTicks(color_indice_t color)
 
 		labels[i]->setText(textForValue(currValueText));
 		if (orientation == LeftToRight || orientation == RightToLeft) {
-			Animations::moveTo(labels[i],childPos, m.y1() + tick_size);
+			Animations::moveTo(labels[i], profileWidget->animSpeed, childPos, m.y1() + tick_size);
 		} else {
-			Animations::moveTo(labels[i],m.x1() - tick_size, childPos);
+			Animations::moveTo(labels[i], profileWidget->animSpeed ,m.x1() - tick_size, childPos);
 		}
 	}
 
@@ -200,9 +189,9 @@ void DiveCartesianAxis::updateTicks(color_indice_t color)
 					 begin - i * stepSize;
 
 		if (orientation == LeftToRight || orientation == RightToLeft) {
-			Animations::moveTo(lines[i],childPos, m.y1());
+			Animations::moveTo(lines[i], profileWidget->animSpeed, childPos, m.y1());
 		} else {
-			Animations::moveTo(lines[i],m.x1(), childPos);
+			Animations::moveTo(lines[i], profileWidget->animSpeed, m.x1(), childPos);
 		}
 	}
 
@@ -223,11 +212,11 @@ void DiveCartesianAxis::updateTicks(color_indice_t color)
 		if (orientation == RightToLeft || orientation == LeftToRight) {
 			label->setAlignment(Qt::AlignBottom | Qt::AlignHCenter);
 			label->setPos(scene()->sceneRect().width() + 10, m.y1() + tick_size); // position it outside of the scene);
-			Animations::moveTo(label,childPos, m.y1() + tick_size);
+			Animations::moveTo(label, profileWidget->animSpeed,childPos , m.y1() + tick_size);
 		} else {
 			label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 			label->setPos(m.x1() - tick_size, scene()->sceneRect().height() + 10);
-			Animations::moveTo(label,m.x1() - tick_size, childPos);
+			Animations::moveTo(label, profileWidget->animSpeed, m.x1() - tick_size, childPos);
 		}
 	}
 
@@ -248,13 +237,13 @@ void DiveCartesianAxis::updateTicks(color_indice_t color)
 		if (orientation == RightToLeft || orientation == LeftToRight) {
 			line->setLine(0, -line_size, 0, 0);
 			line->setPos(scene()->sceneRect().width() + 10, m.y1()); // position it outside of the scene);
-			Animations::moveTo(line,childPos, m.y1());
+			Animations::moveTo(line, profileWidget->animSpeed, childPos, m.y1());
 		} else {
 			QPointF p1 = mapFromScene(3, 0);
 			QPointF p2 = mapFromScene(line_size, 0);
 			line->setLine(p1.x(), 0, p2.x(), 0);
 			line->setPos(m.x1(), scene()->sceneRect().height() + 10);
-			Animations::moveTo(line,m.x1(), childPos);
+			Animations::moveTo(line, profileWidget->animSpeed, m.x1(), childPos);
 		}
 	}
 
@@ -280,7 +269,7 @@ void DiveCartesianAxis::animateChangeLine(const QLineF &newLine)
 
 QString DiveCartesianAxis::textForValue(double value)
 {
-	return QString::number(value);
+	return QString("%L1").arg(value, 0, 'g', 4);
 }
 
 void DiveCartesianAxis::setTickSize(qreal size)
@@ -295,14 +284,19 @@ void DiveCartesianAxis::setTickInterval(double i)
 
 qreal DiveCartesianAxis::valueAt(const QPointF &p) const
 {
+	double fraction;
 	QLineF m = line();
 	QPointF relativePosition = p;
 	relativePosition -= pos(); // normalize p based on the axis' offset on screen
 
-	double retValue = (orientation == LeftToRight || orientation == RightToLeft) ?
-				  max * (relativePosition.x() - m.x1()) / (m.x2() - m.x1()) :
-				  max * (relativePosition.y() - m.y1()) / (m.y2() - m.y1());
-	return retValue;
+	if (orientation == LeftToRight || orientation == RightToLeft)
+		fraction = (relativePosition.x() - m.x1()) / (m.x2() - m.x1());
+	else
+		fraction = (relativePosition.y() - m.y1()) / (m.y2() - m.y1());
+
+	if (orientation == RightToLeft || orientation == BottomToTop)
+			fraction = 1 - fraction;
+	return fraction * (max - min) + min;
 }
 
 qreal DiveCartesianAxis::posAtValue(qreal value)
@@ -333,14 +327,6 @@ qreal DiveCartesianAxis::posAtValue(qreal value)
 	return adjusted;
 }
 
-qreal DiveCartesianAxis::percentAt(const QPointF &p)
-{
-	qreal value = valueAt(p);
-	double size = max - min;
-	double percent = value / size;
-	return percent;
-}
-
 double DiveCartesianAxis::maximum() const
 {
 	return max;
@@ -369,12 +355,11 @@ QString DepthAxis::textForValue(double value)
 {
 	if (value == 0)
 		return QString();
-	return get_depth_string(value, false, false);
+	return get_depth_string(lrint(value), false, false);
 }
 
-QColor DepthAxis::colorForValue(double value)
+QColor DepthAxis::colorForValue(double)
 {
-	Q_UNUSED(value);
 	return QColor(Qt::red);
 }
 
@@ -401,21 +386,20 @@ TimeAxis::TimeAxis(ProfileWidget2 *widget) : DiveCartesianAxis(widget)
 {
 }
 
-QColor TimeAxis::colorForValue(double value)
+QColor TimeAxis::colorForValue(double)
 {
-	Q_UNUSED(value);
 	return QColor(Qt::blue);
 }
 
 QString TimeAxis::textForValue(double value)
 {
-	int nr = value / 60;
+	int nr = lrint(value) / 60;
 	if (maximum() < 600)
 		return QString("%1:%2").arg(nr).arg((int)value % 60, 2, 10, QChar('0'));
 	return QString::number(nr);
 }
 
-void TimeAxis::updateTicks(color_indice_t color)
+void TimeAxis::updateTicks(color_index_t color)
 {
 	DiveCartesianAxis::updateTicks(color);
 	if (maximum() > 600) {

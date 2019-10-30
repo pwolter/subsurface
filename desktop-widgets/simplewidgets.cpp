@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "desktop-widgets/simplewidgets.h"
 #include "qt-models/filtermodels.h"
 
@@ -9,123 +10,119 @@
 #include <QAction>
 #include <QDesktopServices>
 #include <QToolTip>
+#include <QClipboard>
 
 #include "core/file.h"
+#include "core/divesite.h"
 #include "desktop-widgets/mainwindow.h"
-#include "core/helpers.h"
+#include "core/qthelper.h"
 #include "libdivecomputer/parser.h"
 #include "desktop-widgets/divelistview.h"
 #include "core/display.h"
 #include "profile-widget/profilewidget2.h"
-#include "desktop-widgets/undocommands.h"
-
-class MinMaxAvgWidgetPrivate {
-public:
-	QLabel *avgIco, *avgValue;
-	QLabel *minIco, *minValue;
-	QLabel *maxIco, *maxValue;
-
-	MinMaxAvgWidgetPrivate(MinMaxAvgWidget *owner)
-	{
-		avgIco = new QLabel(owner);
-		avgIco->setPixmap(QIcon(":/average").pixmap(16, 16));
-		avgIco->setToolTip(QObject::tr("Average"));
-		minIco = new QLabel(owner);
-		minIco->setPixmap(QIcon(":/minimum").pixmap(16, 16));
-		minIco->setToolTip(QObject::tr("Minimum"));
-		maxIco = new QLabel(owner);
-		maxIco->setPixmap(QIcon(":/maximum").pixmap(16, 16));
-		maxIco->setToolTip(QObject::tr("Maximum"));
-		avgValue = new QLabel(owner);
-		minValue = new QLabel(owner);
-		maxValue = new QLabel(owner);
-
-		QGridLayout *formLayout = new QGridLayout();
-		formLayout->addWidget(maxIco, 0, 0);
-		formLayout->addWidget(maxValue, 0, 1);
-		formLayout->addWidget(avgIco, 1, 0);
-		formLayout->addWidget(avgValue, 1, 1);
-		formLayout->addWidget(minIco, 2, 0);
-		formLayout->addWidget(minValue, 2, 1);
-		owner->setLayout(formLayout);
-	}
-};
+#include "desktop-widgets/command.h"
+#include "core/metadata.h"
+#include "core/tag.h"
+#include "core/divelist.h" // for mark_divelist_changed
 
 double MinMaxAvgWidget::average() const
 {
-	return d->avgValue->text().toDouble();
+	return avgValue->text().toDouble();
 }
 
 double MinMaxAvgWidget::maximum() const
 {
-	return d->maxValue->text().toDouble();
+	return maxValue->text().toDouble();
 }
+
 double MinMaxAvgWidget::minimum() const
 {
-	return d->minValue->text().toDouble();
+	return minValue->text().toDouble();
 }
 
-MinMaxAvgWidget::MinMaxAvgWidget(QWidget *parent) : d(new MinMaxAvgWidgetPrivate(this))
+MinMaxAvgWidget::MinMaxAvgWidget(QWidget *parent) : QWidget(parent)
 {
-	Q_UNUSED(parent)
-}
+	avgIco = new QLabel(this);
+	avgIco->setPixmap(QIcon(":value-average-icon").pixmap(16, 16));
+	avgIco->setToolTip(gettextFromC::tr("Average"));
+	minIco = new QLabel(this);
+	minIco->setPixmap(QIcon(":value-minimum-icon").pixmap(16, 16));
+	minIco->setToolTip(gettextFromC::tr("Minimum"));
+	maxIco = new QLabel(this);
+	maxIco->setPixmap(QIcon(":value-maximum-icon").pixmap(16, 16));
+	maxIco->setToolTip(gettextFromC::tr("Maximum"));
+	avgValue = new QLabel(this);
+	minValue = new QLabel(this);
+	maxValue = new QLabel(this);
 
-MinMaxAvgWidget::~MinMaxAvgWidget()
-{
+	QGridLayout *formLayout = new QGridLayout;
+	formLayout->addWidget(maxIco, 0, 0);
+	formLayout->addWidget(maxValue, 0, 1);
+	formLayout->addWidget(avgIco, 1, 0);
+	formLayout->addWidget(avgValue, 1, 1);
+	formLayout->addWidget(minIco, 2, 0);
+	formLayout->addWidget(minValue, 2, 1);
+	setLayout(formLayout);
 }
 
 void MinMaxAvgWidget::clear()
 {
-	d->avgValue->setText(QString());
-	d->maxValue->setText(QString());
-	d->minValue->setText(QString());
+	avgValue->setText(QString());
+	maxValue->setText(QString());
+	minValue->setText(QString());
 }
 
 void MinMaxAvgWidget::setAverage(double average)
 {
-	d->avgValue->setText(QString::number(average));
+	avgValue->setText(QString::number(average));
 }
 
 void MinMaxAvgWidget::setMaximum(double maximum)
 {
-	d->maxValue->setText(QString::number(maximum));
+	maxValue->setText(QString::number(maximum));
 }
 void MinMaxAvgWidget::setMinimum(double minimum)
 {
-	d->minValue->setText(QString::number(minimum));
+	minValue->setText(QString::number(minimum));
 }
 
 void MinMaxAvgWidget::setAverage(const QString &average)
 {
-	d->avgValue->setText(average);
+	avgValue->setText(average);
 }
 
 void MinMaxAvgWidget::setMaximum(const QString &maximum)
 {
-	d->maxValue->setText(maximum);
+	maxValue->setText(maximum);
 }
 
 void MinMaxAvgWidget::setMinimum(const QString &minimum)
 {
-	d->minValue->setText(minimum);
+	minValue->setText(minimum);
 }
 
 void MinMaxAvgWidget::overrideMinToolTipText(const QString &newTip)
 {
-	d->minIco->setToolTip(newTip);
-	d->minValue->setToolTip(newTip);
+	minIco->setToolTip(newTip);
+	minValue->setToolTip(newTip);
 }
 
 void MinMaxAvgWidget::overrideAvgToolTipText(const QString &newTip)
 {
-	d->avgIco->setToolTip(newTip);
-	d->avgValue->setToolTip(newTip);
+	avgIco->setToolTip(newTip);
+	avgValue->setToolTip(newTip);
 }
 
 void MinMaxAvgWidget::overrideMaxToolTipText(const QString &newTip)
 {
-	d->maxIco->setToolTip(newTip);
-	d->maxValue->setToolTip(newTip);
+	maxIco->setToolTip(newTip);
+	maxValue->setToolTip(newTip);
+}
+
+void MinMaxAvgWidget::setAvgVisibility(bool visible)
+{
+	avgIco->setVisible(visible);
+	avgValue->setVisible(visible);
 }
 
 RenumberDialog *RenumberDialog::instance()
@@ -152,24 +149,19 @@ void RenumberDialog::renumberOnlySelected(bool selected)
 void RenumberDialog::buttonClicked(QAbstractButton *button)
 {
 	if (ui.buttonBox->buttonRole(button) == QDialogButtonBox::AcceptRole) {
-		MainWindow::instance()->dive_list()->rememberSelection();
-		// we remember a map from dive uuid to a pair of old number / new number
-		QMap<int,QPair<int, int> > renumberedDives;
+		MainWindow::instance()->diveList->rememberSelection();
+		// we remember a list from dive uuid to a new number
+		QVector<QPair<dive *, int>> renumberedDives;
 		int i;
 		int newNr = ui.spinBox->value();
-		struct dive *dive = NULL;
-		for_each_dive (i, dive) {
-			if (!selectedOnly || dive->selected) {
-				invalidate_dive_cache(dive);
-				renumberedDives.insert(dive->id, QPair<int,int>(dive->number, newNr++));
+		struct dive *d;
+		for_each_dive (i, d) {
+			if (!selectedOnly || d->selected) {
+				invalidate_dive_cache(d);
+				renumberedDives.append({ d, newNr++ });
 			}
 		}
-		UndoRenumberDives *undoCommand = new UndoRenumberDives(renumberedDives);
-		MainWindow::instance()->undoStack->push(undoCommand);
-
-		MainWindow::instance()->dive_list()->fixMessyQtModelBehaviour();
-		mark_divelist_changed(true);
-		MainWindow::instance()->dive_list()->restoreSelection();
+		Command::renumberDives(renumberedDives);
 	}
 }
 
@@ -198,16 +190,16 @@ void SetpointDialog::setpointData(struct divecomputer *divecomputer, int second)
 void SetpointDialog::buttonClicked(QAbstractButton *button)
 {
 	if (ui.buttonBox->buttonRole(button) == QDialogButtonBox::AcceptRole && dc) {
-		add_event(dc, time, SAMPLE_EVENT_PO2, 0, (int)(1000.0 * ui.spinbox->value()), "SP change");
+		add_event(dc, time, SAMPLE_EVENT_PO2, 0, (int)(1000.0 * ui.spinbox->value()),
+			QT_TRANSLATE_NOOP("gettextFromC", "SP change"));
 		invalidate_dive_cache(current_dive);
 	}
 	mark_divelist_changed(true);
-	MainWindow::instance()->graphics()->replot();
+	MainWindow::instance()->graphics->replot();
 }
 
-SetpointDialog::SetpointDialog(QWidget *parent) :
-	QDialog(parent),
-	dc(0)
+SetpointDialog::SetpointDialog(QWidget *parent) : QDialog(parent),
+	dc(0), time(0)
 {
 	ui.setupUi(this);
 	connect(ui.buttonBox, SIGNAL(clicked(QAbstractButton *)), this, SLOT(buttonClicked(QAbstractButton *)));
@@ -234,27 +226,19 @@ void ShiftTimesDialog::buttonClicked(QAbstractButton *button)
 		if (amount != 0) {
 			// DANGER, DANGER - this could get our dive_table unsorted...
 			int i;
-			struct dive *dive;
-			QList<int> affectedDives;
-			for_each_dive (i, dive) {
-				if (!dive->selected)
-					continue;
-
-				affectedDives.append(dive->id);
+			struct dive *d;
+			QVector<dive *> affectedDives;
+			for_each_dive (i, d) {
+				if (d->selected)
+					affectedDives.append(d);
 			}
-			MainWindow::instance()->undoStack->push(new UndoShiftTime(affectedDives, amount));
-			sort_table(&dive_table);
-			mark_divelist_changed(true);
-			MainWindow::instance()->dive_list()->rememberSelection();
-			MainWindow::instance()->refreshDisplay();
-			MainWindow::instance()->dive_list()->restoreSelection();
+			Command::shiftTime(affectedDives, amount);
 		}
 	}
 }
 
-void ShiftTimesDialog::showEvent(QShowEvent *event)
+void ShiftTimesDialog::showEvent(QShowEvent*)
 {
-	Q_UNUSED(event)
 	ui.timeEdit->setTime(QTime(0, 0, 0, 0));
 	when = get_times(); //get time of first selected dive
 	ui.currentTime->setText(get_dive_date_string(when));
@@ -272,8 +256,7 @@ void ShiftTimesDialog::changeTime()
 	ui.shiftedTime->setText(get_dive_date_string(amount + when));
 }
 
-ShiftTimesDialog::ShiftTimesDialog(QWidget *parent) :
-	QDialog(parent),
+ShiftTimesDialog::ShiftTimesDialog(QWidget *parent) : QDialog(parent),
 	when(0)
 {
 	ui.setupUi(this);
@@ -301,7 +284,7 @@ void ShiftImageTimesDialog::syncCameraClicked()
 	QStringList fileNames = QFileDialog::getOpenFileNames(this,
 							      tr("Open image file"),
 							      DiveListView::lastUsedImageDir(),
-							      tr("Image files (*.jpg *.jpeg *.pnm *.tif *.tiff)"));
+							      tr("Image files") + " (*.jpg *.jpeg)");
 	if (fileNames.isEmpty())
 		return;
 
@@ -312,7 +295,7 @@ void ShiftImageTimesDialog::syncCameraClicked()
 	scene->addPixmap(picture.scaled(ui.DCImage->size()));
 	ui.DCImage->setScene(scene);
 
-	dcImageEpoch = picture_get_timestamp(fileNames.at(0).toUtf8().data());
+	dcImageEpoch = picture_get_timestamp(qPrintable(fileNames.at(0)));
 	QDateTime dcDateTime = QDateTime::fromTime_t(dcImageEpoch, Qt::UTC);
 	ui.dcTime->setDateTime(dcDateTime);
 	connect(ui.dcTime, SIGNAL(dateTimeChanged(const QDateTime &)), this, SLOT(dcDateTimeChanged(const QDateTime &)));
@@ -337,8 +320,7 @@ bool ShiftImageTimesDialog::matchAll()
 	return matchAllImages;
 }
 
-ShiftImageTimesDialog::ShiftImageTimesDialog(QWidget *parent, QStringList fileNames) :
-	QDialog(parent),
+ShiftImageTimesDialog::ShiftImageTimesDialog(QWidget *parent, QStringList fileNames) : QDialog(parent),
 	fileNames(fileNames),
 	m_amount(0),
 	matchAllImages(false)
@@ -347,8 +329,16 @@ ShiftImageTimesDialog::ShiftImageTimesDialog(QWidget *parent, QStringList fileNa
 	connect(ui.buttonBox, SIGNAL(clicked(QAbstractButton *)), this, SLOT(buttonClicked(QAbstractButton *)));
 	connect(ui.syncCamera, SIGNAL(clicked()), this, SLOT(syncCameraClicked()));
 	connect(ui.timeEdit, SIGNAL(timeChanged(const QTime &)), this, SLOT(timeEditChanged(const QTime &)));
+	connect(ui.backwards, SIGNAL(toggled(bool)), this, SLOT(timeEditChanged()));
 	connect(ui.matchAllImages, SIGNAL(toggled(bool)), this, SLOT(matchAllImagesToggled(bool)));
 	dcImageEpoch = (time_t)0;
+
+	// Get times of all files. 0 means that the time couldn't be determined.
+	int numFiles = fileNames.size();
+	timestamps.resize(numFiles);
+	for (int i = 0; i < numFiles; ++i)
+		timestamps[i] = picture_get_timestamp(qPrintable(fileNames[i]));
+	updateInvalid();
 }
 
 time_t ShiftImageTimesDialog::amount() const
@@ -369,36 +359,58 @@ void ShiftImageTimesDialog::setOffset(time_t offset)
 
 void ShiftImageTimesDialog::updateInvalid()
 {
-	timestamp_t timestamp;
 	bool allValid = true;
 	ui.warningLabel->hide();
-	ui.invalidLabel->hide();
-	QDateTime time = QDateTime::fromTime_t(displayed_dive.when, Qt::UTC);
-	ui.invalidLabel->setText("Dive:" + time.toString() + "\n");
+	ui.invalidFilesText->hide();
+	QDateTime time_first = QDateTime::fromTime_t(first_selected_dive()->when, Qt::UTC);
+	QDateTime time_last = QDateTime::fromTime_t(last_selected_dive()->when, Qt::UTC);
+	if (first_selected_dive() == last_selected_dive()) {
+		ui.invalidFilesText->setPlainText(tr("Selected dive date/time") + ": " + time_first.toString());
+	} else {
+		ui.invalidFilesText->setPlainText(tr("First selected dive date/time") + ": " + time_first.toString());
+		ui.invalidFilesText->append(tr("Last selected dive date/time") + ": " + time_last.toString());
+	}
+	ui.invalidFilesText->append(tr("\nFiles with inappropriate date/time") + ":");
 
-	Q_FOREACH (const QString &fileName, fileNames) {
-		if (picture_check_valid(fileName.toUtf8().data(), m_amount))
+	int numFiles = fileNames.size();
+	for (int i = 0; i < numFiles; ++i) {
+		if (picture_check_valid_time(timestamps[i], m_amount))
 			continue;
 
-		// We've found invalid image
-		timestamp = picture_get_timestamp(fileName.toUtf8().data());
-		time.setTime_t(timestamp + m_amount);
-		ui.invalidLabel->setText(ui.invalidLabel->text() + fileName + " " + time.toString() + "\n");
+		// We've found an invalid image
+		time_first.setTime_t(timestamps[i] + m_amount);
+		if (timestamps[i] == 0)
+			ui.invalidFilesText->append(fileNames[i] + " - " + tr("No Exif date/time found"));
+		else
+			ui.invalidFilesText->append(fileNames[i] + " - " + time_first.toString());
 		allValid = false;
 	}
 
-	if (!allValid){
+	if (!allValid) {
 		ui.warningLabel->show();
-		ui.invalidLabel->show();
+		ui.invalidFilesText->show();
 	}
 }
 
 void ShiftImageTimesDialog::timeEditChanged(const QTime &time)
 {
+	QDateTimeEdit::Section timeEditSection = ui.timeEdit->currentSection();
+	ui.timeEdit->setEnabled(false);
 	m_amount = time.hour() * 3600 + time.minute() * 60;
 	if (ui.backwards->isChecked())
-			m_amount *= -1;
+		m_amount *= -1;
 	updateInvalid();
+	ui.timeEdit->setEnabled(true);
+	ui.timeEdit->setFocus();
+	ui.timeEdit->setSelectedSection(timeEditSection);
+}
+
+void ShiftImageTimesDialog::timeEditChanged()
+{
+	if ((m_amount > 0) == ui.backwards->isChecked())
+		m_amount *= -1;
+	if (m_amount)
+		updateInvalid();
 }
 
 URLDialog::URLDialog(QWidget *parent) : QDialog(parent)
@@ -428,128 +440,6 @@ bool isGnome3Session()
 	QString p_stdout = p.readAllStandardOutput();
 	return !p_stdout.isEmpty();
 #endif
-}
-
-DateWidget::DateWidget(QWidget *parent) : QWidget(parent),
-	calendarWidget(new QCalendarWidget())
-{
-	setDate(QDate::currentDate());
-	setMinimumSize(QSize(80, 64));
-	setFocusPolicy(Qt::StrongFocus);
-	calendarWidget->setWindowFlags(Qt::FramelessWindowHint);
-	calendarWidget->setFirstDayOfWeek(getLocale().firstDayOfWeek());
-	calendarWidget->setVerticalHeaderFormat(QCalendarWidget::NoVerticalHeader);
-
-	connect(calendarWidget, SIGNAL(activated(QDate)), calendarWidget, SLOT(hide()));
-	connect(calendarWidget, SIGNAL(clicked(QDate)), calendarWidget, SLOT(hide()));
-	connect(calendarWidget, SIGNAL(activated(QDate)), this, SLOT(setDate(QDate)));
-	connect(calendarWidget, SIGNAL(clicked(QDate)), this, SLOT(setDate(QDate)));
-	calendarWidget->installEventFilter(this);
-}
-
-bool DateWidget::eventFilter(QObject *object, QEvent *event)
-{
-	if (event->type() == QEvent::FocusOut) {
-		calendarWidget->hide();
-		return true;
-	}
-	if (event->type() == QEvent::KeyPress) {
-		QKeyEvent *ev = static_cast<QKeyEvent *>(event);
-		if (ev->key() == Qt::Key_Escape) {
-			calendarWidget->hide();
-		}
-	}
-	return QObject::eventFilter(object, event);
-}
-
-
-void DateWidget::setDate(const QDate &date)
-{
-	mDate = date;
-	update();
-	emit dateChanged(mDate);
-}
-
-QDate DateWidget::date() const
-{
-	return mDate;
-}
-
-void DateWidget::changeEvent(QEvent *event)
-{
-	if (event->type() == QEvent::EnabledChange) {
-		update();
-	}
-}
-
-#define DATEWIDGETWIDTH 80
-void DateWidget::paintEvent(QPaintEvent *event)
-{
-	Q_UNUSED(event)
-	static QPixmap pix = QPixmap(":/calendar").scaled(DATEWIDGETWIDTH, 64);
-
-	QPainter painter(this);
-
-	painter.drawPixmap(QPoint(0, 0), isEnabled() ? pix : QPixmap::fromImage(grayImage(pix.toImage())));
-
-	QString month = mDate.toString("MMM");
-	QString year = mDate.toString("yyyy");
-	QString day = mDate.toString("dd");
-
-	QFont font = QFont("monospace", 10);
-	QFontMetrics metrics = QFontMetrics(font);
-	painter.setFont(font);
-	painter.setPen(QPen(QBrush(Qt::white), 0));
-	painter.setBrush(QBrush(Qt::white));
-	painter.drawText(QPoint(6, metrics.height() + 1), month);
-	painter.drawText(QPoint(DATEWIDGETWIDTH - metrics.width(year) - 6, metrics.height() + 1), year);
-
-	font.setPointSize(14);
-	metrics = QFontMetrics(font);
-	painter.setPen(QPen(QBrush(Qt::black), 0));
-	painter.setBrush(Qt::black);
-	painter.setFont(font);
-	painter.drawText(QPoint(DATEWIDGETWIDTH / 2 - metrics.width(day) / 2, 45), day);
-
-	if (hasFocus()) {
-		QStyleOptionFocusRect option;
-		option.initFrom(this);
-		option.backgroundColor = palette().color(QPalette::Background);
-		style()->drawPrimitive(QStyle::PE_FrameFocusRect, &option, &painter, this);
-	}
-}
-
-void DateWidget::mousePressEvent(QMouseEvent *event)
-{
-	calendarWidget->setSelectedDate(mDate);
-	calendarWidget->move(event->globalPos());
-	calendarWidget->show();
-	calendarWidget->raise();
-	calendarWidget->setFocus();
-}
-
-void DateWidget::focusInEvent(QFocusEvent *event)
-{
-	setFocus();
-	QWidget::focusInEvent(event);
-}
-
-void DateWidget::focusOutEvent(QFocusEvent *event)
-{
-	QWidget::focusOutEvent(event);
-}
-
-void DateWidget::keyPressEvent(QKeyEvent *event)
-{
-	if (event->key() == Qt::Key_Return ||
-	    event->key() == Qt::Key_Enter ||
-	    event->key() == Qt::Key_Space) {
-		calendarWidget->move(mapToGlobal(QPoint(0, 64)));
-		calendarWidget->show();
-		event->setAccepted(true);
-	} else {
-		QWidget::keyPressEvent(event);
-	}
 }
 
 #define COMPONENT_FROM_UI(_component) what->_component = ui._component->isChecked()
@@ -590,162 +480,51 @@ void DiveComponentSelection::buttonClicked(QAbstractButton *button)
 		COMPONENT_FROM_UI(cylinders);
 		COMPONENT_FROM_UI(weights);
 		selective_copy_dive(&displayed_dive, targetDive, *what, true);
+		QClipboard *clipboard = QApplication::clipboard();
+		QTextStream text;
+		QString cliptext;
+		text.setString(&cliptext);
+		if (what->divesite && displayed_dive.dive_site)
+			text << tr("Dive site: ") << displayed_dive.dive_site->name << "\n";
+		if (what->divemaster)
+			text << tr("Dive master: ") << displayed_dive.divemaster << "\n";
+		if (what->buddy)
+			text << tr("Buddy: ") << displayed_dive.buddy << "\n";
+		if (what->rating)
+			text << tr("Rating: ") + QString("*").repeated(displayed_dive.rating) << "\n";
+		if (what->visibility)
+			text << tr("Visibility: ") + QString("*").repeated(displayed_dive.visibility) << "\n";
+		if (what->notes)
+			text << tr("Notes:\n") << displayed_dive.notes << "\n";
+		if (what->suit)
+			text << tr("Suit: ") << displayed_dive.suit << "\n";
+		if (what-> tags) {
+			text << tr("Tags: ");
+			tag_entry *entry = displayed_dive.tag_list;
+			while (entry) {
+				text << entry->tag->name << " ";
+				entry = entry->next;
+			}
+			text << "\n";
+		}
+		if (what->cylinders) {
+			int cyl;
+			text << tr("Cylinders:\n");
+			for (cyl = 0; cyl < MAX_CYLINDERS; cyl++) {
+				if (is_cylinder_used(&displayed_dive, cyl))
+					text << displayed_dive.cylinder[cyl].type.description << " " << gasname(displayed_dive.cylinder[cyl].gasmix) << "\n";
+			}
+		}
+		if (what->weights) {
+			int w;
+			text << tr("Weights:\n");
+			for (w = 0; w < displayed_dive.weightsystems.nr; w++) {
+				weightsystem_t ws = displayed_dive.weightsystems.weightsystems[w];
+				text << ws.description << ws.weight.grams / 1000 << "kg\n";
+			}
+		}
+		clipboard->setText(cliptext);
 	}
-}
-
-TagFilter::TagFilter(QWidget *parent) : QWidget(parent)
-{
-	ui.setupUi(this);
-	ui.label->setText(tr("Tags: "));
-#if QT_VERSION >= 0x050200
-	ui.filterInternalList->setClearButtonEnabled(true);
-#endif
-	QSortFilterProxyModel *filter = new QSortFilterProxyModel();
-	filter->setSourceModel(TagFilterModel::instance());
-	filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
-	connect(ui.filterInternalList, SIGNAL(textChanged(QString)), filter, SLOT(setFilterFixedString(QString)));
-	ui.filterList->setModel(filter);
-}
-
-void TagFilter::showEvent(QShowEvent *event)
-{
-	MultiFilterSortModel::instance()->addFilterModel(TagFilterModel::instance());
-	QWidget::showEvent(event);
-}
-
-void TagFilter::hideEvent(QHideEvent *event)
-{
-	MultiFilterSortModel::instance()->removeFilterModel(TagFilterModel::instance());
-	QWidget::hideEvent(event);
-}
-
-BuddyFilter::BuddyFilter(QWidget *parent) : QWidget(parent)
-{
-	ui.setupUi(this);
-	ui.label->setText(tr("Person: "));
-	ui.label->setToolTip(tr("Searches for buddies and divemasters"));
-#if QT_VERSION >= 0x050200
-	ui.filterInternalList->setClearButtonEnabled(true);
-#endif
-	QSortFilterProxyModel *filter = new QSortFilterProxyModel();
-	filter->setSourceModel(BuddyFilterModel::instance());
-	filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
-	connect(ui.filterInternalList, SIGNAL(textChanged(QString)), filter, SLOT(setFilterFixedString(QString)));
-	ui.filterList->setModel(filter);
-}
-
-void BuddyFilter::showEvent(QShowEvent *event)
-{
-	MultiFilterSortModel::instance()->addFilterModel(BuddyFilterModel::instance());
-	QWidget::showEvent(event);
-}
-
-void BuddyFilter::hideEvent(QHideEvent *event)
-{
-	MultiFilterSortModel::instance()->removeFilterModel(BuddyFilterModel::instance());
-	QWidget::hideEvent(event);
-}
-
-LocationFilter::LocationFilter(QWidget *parent) : QWidget(parent)
-{
-	ui.setupUi(this);
-	ui.label->setText(tr("Location: "));
-#if QT_VERSION >= 0x050200
-	ui.filterInternalList->setClearButtonEnabled(true);
-#endif
-	QSortFilterProxyModel *filter = new QSortFilterProxyModel();
-	filter->setSourceModel(LocationFilterModel::instance());
-	filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
-	connect(ui.filterInternalList, SIGNAL(textChanged(QString)), filter, SLOT(setFilterFixedString(QString)));
-	ui.filterList->setModel(filter);
-}
-
-void LocationFilter::showEvent(QShowEvent *event)
-{
-	MultiFilterSortModel::instance()->addFilterModel(LocationFilterModel::instance());
-	QWidget::showEvent(event);
-}
-
-void LocationFilter::hideEvent(QHideEvent *event)
-{
-	MultiFilterSortModel::instance()->removeFilterModel(LocationFilterModel::instance());
-	QWidget::hideEvent(event);
-}
-
-SuitFilter::SuitFilter(QWidget *parent) : QWidget(parent)
-{
-	ui.setupUi(this);
-	ui.label->setText(tr("Suits: "));
-#if QT_VERSION >= 0x050200
-	ui.filterInternalList->setClearButtonEnabled(true);
-#endif
-	QSortFilterProxyModel *filter = new QSortFilterProxyModel();
-	filter->setSourceModel(SuitsFilterModel::instance());
-	filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
-	connect(ui.filterInternalList, SIGNAL(textChanged(QString)), filter, SLOT(setFilterFixedString(QString)));
-	ui.filterList->setModel(filter);
-}
-
-void SuitFilter::showEvent(QShowEvent *event)
-{
-	MultiFilterSortModel::instance()->addFilterModel(SuitsFilterModel::instance());
-	QWidget::showEvent(event);
-}
-
-void SuitFilter::hideEvent(QHideEvent *event)
-{
-	MultiFilterSortModel::instance()->removeFilterModel(SuitsFilterModel::instance());
-	QWidget::hideEvent(event);
-}
-
-MultiFilter::MultiFilter(QWidget *parent) : QWidget(parent)
-{
-	ui.setupUi(this);
-
-	QWidget *expandedWidget = new QWidget();
-	QHBoxLayout *l = new QHBoxLayout();
-
-	TagFilter *tagFilter = new TagFilter(this);
-	int minimumHeight = tagFilter->ui.filterInternalList->height() +
-			tagFilter->ui.verticalLayout->spacing() * tagFilter->ui.verticalLayout->count();
-
-	QListView *dummyList = new QListView();
-	QStringListModel *dummy = new QStringListModel(QStringList() << "Dummy Text");
-	dummyList->setModel(dummy);
-
-	connect(ui.close, SIGNAL(clicked(bool)), this, SLOT(closeFilter()));
-	connect(ui.clear, SIGNAL(clicked(bool)), MultiFilterSortModel::instance(), SLOT(clearFilter()));
-	connect(ui.maximize, SIGNAL(clicked(bool)), this, SLOT(adjustHeight()));
-
-	l->addWidget(tagFilter);
-	l->addWidget(new BuddyFilter());
-	l->addWidget(new LocationFilter());
-	l->addWidget(new SuitFilter());
-	l->setContentsMargins(0, 0, 0, 0);
-	l->setSpacing(0);
-	expandedWidget->setLayout(l);
-
-	ui.scrollArea->setWidget(expandedWidget);
-	expandedWidget->resize(expandedWidget->width(), minimumHeight + dummyList->sizeHintForRow(0) * 5 );
-	ui.scrollArea->setMinimumHeight(expandedWidget->height() + 5);
-
-	connect(MultiFilterSortModel::instance(), SIGNAL(filterFinished()), this, SLOT(filterFinished()));
-}
-
-void MultiFilter::filterFinished()
-{
-	ui.filterText->setText(tr("Filter shows %1 (of %2) dives").arg(MultiFilterSortModel::instance()->divesDisplayed).arg(dive_table.nr));
-}
-
-void MultiFilter::adjustHeight()
-{
-	ui.scrollArea->setVisible(!ui.scrollArea->isVisible());
-}
-
-void MultiFilter::closeFilter()
-{
-	MultiFilterSortModel::instance()->clearFilter();
-	hide();
 }
 
 TextHyperlinkEventFilter::TextHyperlinkEventFilter(QTextEdit *txtEdit) : QObject(txtEdit),
@@ -816,7 +595,7 @@ void TextHyperlinkEventFilter::handleUrlTooltip(const QString &urlStr, const QPo
 	} else {
 		// per Qt docs, QKeySequence::toString does localization "tr()" on strings like Ctrl.
 		// Note: Qt knows that on Mac OSX, ctrl (and Control) are the command key.
-		const QString ctrlKeyName = QKeySequence(Qt::CTRL).toString();
+		const QString ctrlKeyName = QKeySequence(Qt::CTRL).toString(QKeySequence::NativeText);
 		// ctrlKeyName comes with a trailing '+', as in: 'Ctrl+'
 		QToolTip::showText(pos, tr("%1click to visit %2").arg(ctrlKeyName).arg(urlStr));
 	}
@@ -825,7 +604,7 @@ void TextHyperlinkEventFilter::handleUrlTooltip(const QString &urlStr, const QPo
 bool TextHyperlinkEventFilter::stringMeetsOurUrlRequirements(const QString &maybeUrlStr)
 {
 	QUrl url(maybeUrlStr, QUrl::StrictMode);
-	return url.isValid() && (!url.scheme().isEmpty());
+	return url.isValid() && (!url.scheme().isEmpty()) && ((!url.authority().isEmpty()) || (!url.path().isEmpty()));
 }
 
 QString TextHyperlinkEventFilter::tryToFormulateUrl(QTextCursor *cursor)
@@ -869,6 +648,7 @@ QString TextHyperlinkEventFilter::fromCursorTilWhitespace(QTextCursor *cursor, c
 	QString grownText;
 	QString noSpaces;
 	bool movedOk = false;
+	int oldSize = -1;
 
 	do {
 		result = grownText; // this is a no-op on the first visit.
@@ -880,6 +660,9 @@ QString TextHyperlinkEventFilter::fromCursorTilWhitespace(QTextCursor *cursor, c
 		}
 
 		grownText = cursor->selectedText();
+		if (grownText.size() == oldSize)
+			movedOk = false;
+		oldSize = grownText.size();
 		noSpaces = grownText.simplified().replace(" ", "");
 	} while (grownText == noSpaces && movedOk);
 

@@ -1,34 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PREF_H
 #define PREF_H
 
 #ifdef __cplusplus
 extern "C" {
+#else
+#include <stdbool.h>
 #endif
 
 #include "units.h"
 #include "taxonomy.h"
 
-/* can't use 'bool' for the boolean values - different size in C and C++ */
 typedef struct
 {
-	short po2;
-	short pn2;
-	short phe;
-	double po2_threshold;
+	bool po2;
+	bool pn2;
+	bool phe;
+	double po2_threshold_min;
+	double po2_threshold_max;
 	double pn2_threshold;
 	double phe_threshold;
 } partial_pressure_graphs_t;
 
 typedef struct {
-	char *access_token;
-	char *user_id;
-	char *album_id;
-} facebook_prefs_t;
-
-typedef struct {
-	bool enable_geocoding;
-	bool parse_dive_without_gps;
-	bool tag_existing_dives;
 	enum taxonomy_category category[3];
 } geocoding_prefs_t;
 
@@ -44,121 +38,6 @@ enum deco_mode {
 	VPMB
 };
 
-typedef struct {
-	bool dont_check_for_updates;
-	bool dont_check_exists;
-	char *last_version_used;
-	char *next_check;
-} update_manager_prefs_t;
-
-typedef struct {
-	char *vendor;
-	char *product;
-	char *device;
-	int download_mode;
-} dive_computer_prefs_t;
-
-struct preferences {
-	const char *divelist_font;
-	const char *default_filename;
-	const char *default_cylinder;
-	const char *cloud_base_url;
-	const char *cloud_git_url;
-	const char *time_format;
-	const char *date_format;
-	const char *date_format_short;
-	bool time_format_override;
-	bool date_format_override;
-	double font_size;
-	partial_pressure_graphs_t pp_graphs;
-	short mod;
-	double modpO2;
-	short ead;
-	short dcceiling;
-	short redceiling;
-	short calcceiling;
-	short calcceiling3m;
-	short calcalltissues;
-	short calcndltts;
-	short gflow;
-	short gfhigh;
-	int animation_speed;
-	bool gf_low_at_maxdepth;
-	bool show_ccr_setpoint;
-	bool show_ccr_sensors;
-	short display_invalid_dives;
-	short unit_system;
-	struct units units;
-	bool coordinates_traditional;
-	short show_sac;
-	short display_unused_tanks;
-	short show_average_depth;
-	short zoomed_plot;
-	short hrgraph;
-	short percentagegraph;
-	short rulergraph;
-	short tankbar;
-	short save_userid_local;
-	char *userid;
-	int ascrate75; // All rates in mm / sec
-	int ascrate50;
-	int ascratestops;
-	int ascratelast6m;
-	int descrate;
-	int bottompo2;
-	int decopo2;
-	enum deco_mode display_deco_mode;
-	depth_t bestmixend;
-	int proxy_type;
-	char *proxy_host;
-	int proxy_port;
-	short proxy_auth;
-	char *proxy_user;
-	char *proxy_pass;
-	bool doo2breaks;
-	bool drop_stone_mode;
-	bool last_stop;   // At 6m?
-	bool verbatim_plan;
-	bool display_runtime;
-	bool display_duration;
-	bool display_transitions;
-	bool safetystop;
-	bool switch_at_req_stop;
-	int reserve_gas;
-	int min_switch_duration; // seconds
-	int bottomsac;
-	int decosac;
-	int o2consumption; // ml per min
-	int pscr_ratio; // dump ratio times 1000
-	int defaultsetpoint; // default setpoint in mbar
-	bool show_pictures_in_profile;
-	bool use_default_file;
-	short default_file_behavior;
-	facebook_prefs_t facebook;
-	char *cloud_storage_password;
-	char *cloud_storage_newpassword;
-	char *cloud_storage_email;
-	char *cloud_storage_email_encoded;
-	bool save_password_local;
-	short cloud_verification_status;
-	bool cloud_background_sync;
-	geocoding_prefs_t geocoding;
-	enum deco_mode planner_deco_mode;
-	short vpmb_conservatism;
-	int time_threshold;
-	int distance_threshold;
-	bool git_local_only;
-	short cloud_timeout;
-	locale_prefs_t locale; //: TODO: move the rest of locale based info here.
-	update_manager_prefs_t update_manager;
-	dive_computer_prefs_t dive_computer;
-};
-enum unit_system_values {
-	METRIC,
-	IMPERIAL,
-	PERSONALIZE
-};
-
 enum def_file_behavior {
 	UNDEFINED_DEFAULT_FILE,
 	LOCAL_DEFAULT_FILE,
@@ -166,16 +45,174 @@ enum def_file_behavior {
 	CLOUD_DEFAULT_FILE
 };
 
-enum cloud_status {
-	CS_UNKNOWN,
-	CS_INCORRECT_USER_PASSWD,
-	CS_NEED_TO_VERIFY,
-	CS_VERIFIED
+typedef struct {
+	bool dont_check_for_updates;
+	bool dont_check_exists;
+	const char *last_version_used;
+	int next_check;
+} update_manager_prefs_t;
+
+typedef struct {
+	const char *vendor;
+	const char *product;
+	const char *device;
+	const char *device_name;
+} dive_computer_prefs_t;
+
+enum unit_system_values {
+	METRIC,
+	IMPERIAL,
+	PERSONALIZE
 };
 
-extern struct preferences prefs, default_prefs, informational_prefs;
+// ********** PREFERENCES **********
+// This struct is kept global for all of ssrf
+// most of the fields are loaded from git as
+// part of the dives, but some fields are loaded
+// from local storage (QSettings)
+// The struct is divided in groups (sorted)
+// and elements within the group is sorted
+//
+// When adding items to this list, please keep
+// the list sorted (easier to find something)
+struct preferences {
+	// ********** Animations **********
+	int animation_speed;
 
-#define PP_GRAPHS_ENABLED (prefs.pp_graphs.po2 || prefs.pp_graphs.pn2 || prefs.pp_graphs.phe)
+	// ********** CloudStorage **********
+	bool       cloud_auto_sync;
+	const char *cloud_base_url;
+	const char *cloud_git_url;
+	const char *cloud_storage_email;
+	const char *cloud_storage_email_encoded;
+	const char *cloud_storage_password;
+	const char *cloud_storage_pin;
+	int         cloud_timeout;
+	int         cloud_verification_status;
+	bool        save_password_local;
+
+	// ********** DiveComputer **********
+	dive_computer_prefs_t dive_computer;
+	dive_computer_prefs_t dive_computer1;
+	dive_computer_prefs_t dive_computer2;
+	dive_computer_prefs_t dive_computer3;
+	dive_computer_prefs_t dive_computer4;
+
+	// ********** Display **********
+	bool        display_invalid_dives;
+	const char *divelist_font;
+	double      font_size;
+	double      mobile_scale;
+	bool        show_developer;
+
+	// ********** General **********
+	bool        auto_recalculate_thumbnails;
+	bool	    extract_video_thumbnails;
+	int	    extract_video_thumbnails_position; // position in stream: 0=first 100=last second
+	const char *ffmpeg_executable; // path of ffmpeg binary
+	int         defaultsetpoint; // default setpoint in mbar
+	const char *default_cylinder;
+	const char *default_filename;
+	enum def_file_behavior default_file_behavior;
+	int         o2consumption; // ml per min
+	int         pscr_ratio; // dump ratio times 1000
+	bool        use_default_file;
+	bool        filterFullTextNotes; // mobile only - include notes information in full text searh
+	bool        filterCaseSensitive; // mobile only - make fltering case sensitive
+
+	// ********** Geocoding **********
+	geocoding_prefs_t geocoding;
+
+	// ********** Language **********
+	const char *    date_format;
+	bool            date_format_override;
+	const char *    date_format_short;
+	locale_prefs_t  locale; //: TODO: move the rest of locale based info here.
+	const char *    time_format;
+	bool            time_format_override;
+
+	// ********** LocationService **********
+	int time_threshold;
+	int distance_threshold;
+
+	// ********** Network **********
+	bool        proxy_auth;
+	const char *proxy_host;
+	int         proxy_port;
+	int         proxy_type;
+	const char *proxy_user;
+	const char *proxy_pass;
+
+	// ********** Planner **********
+	int             ascratelast6m;
+	int             ascratestops;
+	int             ascrate50;
+	int             ascrate75; // All rates in mm / sec
+	depth_t         bestmixend;
+	int             bottompo2;
+	int             bottomsac;
+	int             decopo2;
+	int             decosac;
+	int             descrate;
+	bool            display_duration;
+	bool            display_runtime;
+	bool            display_transitions;
+	bool            display_variations;
+	bool            doo2breaks;
+	bool            dobailout;
+	bool            drop_stone_mode;
+	bool            last_stop;   // At 6m?
+	int             min_switch_duration; // seconds
+	int             surface_segment; // seconds at the surface after planned dive
+	enum deco_mode  planner_deco_mode;
+	int             problemsolvingtime;
+	int             reserve_gas;
+	int             sacfactor;
+	bool            safetystop;
+	bool            switch_at_req_stop;
+	bool            verbatim_plan;
+
+	// ********** TecDetails **********
+	bool                        calcalltissues;
+	bool                        calcceiling;
+	bool                        calcceiling3m;
+	bool                        calcndltts;
+	bool                        decoinfo; // Show deco info in infobox
+	bool                        dcceiling;
+	enum deco_mode              display_deco_mode;
+	bool                        display_unused_tanks;
+	bool                        ead;
+	int                         gfhigh;
+	int                         gflow;
+	bool                        gf_low_at_maxdepth;
+	bool                        hrgraph;
+	bool                        mod;
+	double                      modpO2;
+	bool                        percentagegraph;
+	partial_pressure_graphs_t   pp_graphs;
+	bool                        redceiling;
+	bool                        rulergraph;
+	bool                        show_average_depth;
+	bool                        show_ccr_sensors;
+	bool                        show_ccr_setpoint;
+	bool                        show_icd;
+	bool                        show_pictures_in_profile;
+	bool                        show_sac;
+	bool                        show_scr_ocpo2;
+	bool                        tankbar;
+	int                         vpmb_conservatism;
+	bool                        zoomed_plot;
+
+	// ********** Units **********
+	bool                    coordinates_traditional;
+	enum unit_system_values unit_system;
+	struct units            units;
+
+	// ********** UpdateManager **********
+	update_manager_prefs_t update_manager;
+};
+
+extern struct preferences prefs, default_prefs, git_prefs;
 
 extern const char *system_divelist_default_font;
 extern double system_divelist_default_font_size;
@@ -184,6 +221,7 @@ extern const char *system_default_directory(void);
 extern const char *system_default_filename();
 extern bool subsurface_ignore_font(const char *font);
 extern void subsurface_OS_pref_setup();
+extern void copy_prefs(struct preferences *src, struct preferences *dest);
 
 #ifdef __cplusplus
 }

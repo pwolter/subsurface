@@ -1,10 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
+#ifdef __clang__
 // Clang has a bug on zero-initialization of C structs.
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 #include "save-html.h"
-#include "qthelperfromc.h"
+#include "qthelper.h"
 #include "gettext.h"
-#include "stdio.h"
+#include "divesite.h"
+#include "errorhelper.h"
+#include "file.h"
+#include "tag.h"
+#include "trip.h"
+#include <stdio.h>
 
 void write_attribute(struct membuffer *b, const char *att_name, const char *value, const char *separator)
 {
@@ -27,7 +35,9 @@ void save_photos(struct membuffer *b, const char *photos_dir, struct dive *dive)
 		put_string(b, separator);
 		separator = ", ";
 		char *fname = get_file_name(local_file_path(pic));
-		put_format(b, "{\"filename\":\"%s\"}", fname);
+		put_string(b, "{\"filename\":\"");
+		put_quoted(b, fname, 1, 0);
+		put_string(b, "\"}");
 		copy_image_and_overwrite(local_file_path(pic), photos_dir, fname);
 		free(fname);
 		pic = pic->next;
@@ -76,7 +86,9 @@ void put_HTML_bookmarks(struct membuffer *b, struct dive *dive)
 	do {
 		put_string(b, separator);
 		separator = ", ";
-		put_format(b, "{\"name\":\"%s\",", ev->name);
+		put_string(b, "{\"name\":\"");
+		put_quoted(b, ev->name, 1, 0);
+		put_string(b, "\",");
 		put_format(b, "\"value\":\"%d\",", ev->value);
 		put_format(b, "\"type\":\"%d\",", ev->type);
 		put_format(b, "\"time\":\"%d\"}", ev->time.seconds);
@@ -96,9 +108,9 @@ static void put_weightsystem_HTML(struct membuffer *b, struct dive *dive)
 	char *separator = "";
 
 	for (i = 0; i < nr; i++) {
-		weightsystem_t *ws = dive->weightsystem + i;
-		int grams = ws->weight.grams;
-		const char *description = ws->description;
+		weightsystem_t ws = dive->weightsystems.weightsystems[i];
+		int grams = ws.weight.grams;
+		const char *description = ws.description;
 
 		put_string(b, separator);
 		separator = ", ";
@@ -127,7 +139,7 @@ static void put_cylinder_HTML(struct membuffer *b, struct dive *dive)
 		if (cylinder->type.size.mliter) {
 			int volume = cylinder->type.size.mliter;
 			if (prefs.units.volume == CUFT && cylinder->type.workingpressure.mbar)
-				volume *= bar_to_atm(cylinder->type.workingpressure.mbar / 1000.0);
+				volume = lrint(volume * bar_to_atm(cylinder->type.workingpressure.mbar / 1000.0));
 			put_HTML_volume_units(b, volume, "\"Size\":\"", " \", ");
 		} else {
 			write_attribute(b, "Size", "--", ", ");
@@ -172,7 +184,7 @@ void put_HTML_samples(struct membuffer *b, struct dive *dive)
 
 	char *separator = "\"samples\":[";
 	for (i = 0; i < dive->dc.samples; i++) {
-		put_format(b, "%s[%d,%d,%d,%d]", separator, s->time.seconds, s->depth.mm, s->cylinderpressure.mbar, s->temperature.mkelvin);
+		put_format(b, "%s[%d,%d,%d,%d]", separator, s->time.seconds, s->depth.mm, s->pressure[0].mbar, s->temperature.mkelvin);
 		separator = ", ";
 		s++;
 	}
@@ -184,8 +196,8 @@ void put_HTML_coordinates(struct membuffer *b, struct dive *dive)
 	struct dive_site *ds = get_dive_site_for_dive(dive);
 	if (!ds)
 		return;
-	degrees_t latitude = ds->latitude;
-	degrees_t longitude = ds->longitude;
+	degrees_t latitude = ds->location.lat;
+	degrees_t longitude = ds->location.lon;
 
 	//don't put coordinates if in (0,0)
 	if (!latitude.udeg && !longitude.udeg)
@@ -266,7 +278,7 @@ void put_HTML_depth(struct membuffer *b, struct dive *dive, const char *pre, con
 {
 	const char *unit;
 	double value;
-	struct units *units_p = get_units();
+	const struct units *units_p = get_units();
 
 	if (!dive->maxdepth.mm) {
 		put_format(b, "%s--%s", pre, post);
@@ -401,7 +413,8 @@ void write_trip(struct membuffer *b, dive_trip_t *trip, int *dive_no, bool selec
 	char *separator = "";
 	bool found_sel_dive = 0;
 
-	for (dive = trip->dives; dive != NULL; dive = dive->next) {
+	for (int i = 0; i < trip->dives.nr; i++) {
+		dive = trip->dives.dives[i];
 		if (!dive->selected && selected_only)
 			continue;
 
@@ -410,7 +423,7 @@ void write_trip(struct membuffer *b, dive_trip_t *trip, int *dive_no, bool selec
 			found_sel_dive = 1;
 			put_format(b, "%c {", *sep);
 			(*sep) = ',';
-			put_format(b, "\"name\":\"%s\",", trip->location);
+			write_attribute(b, "name", trip->location, ", ");
 			put_format(b, "\"dives\":[");
 		}
 		put_string(b, separator);
@@ -431,18 +444,18 @@ void write_trips(struct membuffer *b, const char *photos_dir, bool selected_only
 	char sep_ = ' ';
 	char *sep = &sep_;
 
-	for (trip = dive_trip_list; trip != NULL; trip = trip->next)
-		trip->index = 0;
+	for (i = 0; i < trip_table.nr; ++i)
+		trip_table.trips[i]->saved = 0;
 
 	for_each_dive (i, dive) {
 		trip = dive->divetrip;
 
 		/*Continue if the dive have no trips or we have seen this trip before*/
-		if (!trip || trip->index)
+		if (!trip || trip->saved)
 			continue;
 
 		/* We haven't seen this trip before - save it and all dives */
-		trip->index = 1;
+		trip->saved = 1;
 		write_trip(b, trip, &dive_no, selected_only, photos_dir, list_only, sep);
 	}
 
@@ -528,7 +541,7 @@ void export_translation(const char *file_name)
 	write_attribute(b, "Back_to_List", translate("gettextFromC", "Back to list"), ", ");
 
 	//dive detailed view
-	write_attribute(b, "Dive_No", translate("gettextFromC", "Dive No."), ", ");
+	write_attribute(b, "Dive_No", translate("gettextFromC", "Dive #"), ", ");
 	write_attribute(b, "Dive_profile", translate("gettextFromC", "Dive profile"), ", ");
 	write_attribute(b, "Dive_information", translate("gettextFromC", "Dive information"), ", ");
 	write_attribute(b, "Dive_equipment", translate("gettextFromC", "Dive equipment"), ", ");

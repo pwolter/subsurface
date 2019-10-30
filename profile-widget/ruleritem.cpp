@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "profile-widget/ruleritem.h"
 #ifndef SUBSURFACE_MOBILE
 #include "desktop-widgets/preferences/preferencesdialog.h"
 #endif
 #include "profile-widget/profilewidget2.h"
 #include "core/display.h"
-#include "core/subsurface-qt/SettingsObjectWrapper.h"
+#include "core/settings/qPrefTechnicalDetails.h"
 
 #include <qgraphicssceneevent.h>
 
@@ -16,7 +17,7 @@ RulerNodeItem2::RulerNodeItem2() :
 	timeAxis(NULL),
 	depthAxis(NULL)
 {
-	memset(&pInfo, 0, sizeof(pInfo));
+	init_plot_info(&pInfo);
 	setRect(-8, -8, 16, 16);
 	setBrush(QColor(0xff, 0, 0, 127));
 	setPen(QColor(Qt::red));
@@ -25,7 +26,7 @@ RulerNodeItem2::RulerNodeItem2() :
 	setFlag(ItemIgnoresTransformations);
 }
 
-void RulerNodeItem2::setPlotInfo(plot_info &info)
+void RulerNodeItem2::setPlotInfo(const plot_info &info)
 {
 	pInfo = info;
 	entry = pInfo.entry;
@@ -82,7 +83,7 @@ RulerItem2::RulerItem2() : source(new RulerNodeItem2()),
 	textItemBack->setFlag(QGraphicsItem::ItemIgnoresTransformations);
 	setPen(QPen(QColor(Qt::black), 0.0));
 #ifndef SUBSURFACE_MOBILE
-	connect(SettingsObjectWrapper::instance()->techDetails, &TechnicalDetailsSettings::rulerGraphChanged, this, &RulerItem2::settingsChanged);
+	connect(qPrefTechnicalDetails::instance(), &qPrefTechnicalDetails::rulergraphChanged, this, &RulerItem2::settingsChanged);
 #endif
 }
 
@@ -127,7 +128,7 @@ void RulerItem2::recalculate()
 	const qreal diff = begin.x() + textItem->boundingRect().width();
 	// clamp so that the text doesn't go out of the screen to the right
 	if (diff > view->width()) {
-		begin.setX(begin.x() - (diff - view->width()));
+		begin.setX(lrint(begin.x() - (diff - view->width())));
 		tgtX = mapFromScene(view->mapToScene(begin)).x();
 	}
 	// always show the text bellow the lowest of the start and end points
@@ -151,7 +152,7 @@ RulerNodeItem2 *RulerItem2::destNode() const
 	return dest;
 }
 
-void RulerItem2::setPlotInfo(plot_info info)
+void RulerItem2::setPlotInfo(const plot_info &info)
 {
 	pInfo = info;
 	dest->setPlotInfo(info);

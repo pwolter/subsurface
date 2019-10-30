@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PRINTDIALOG_H
 #define PRINTDIALOG_H
 
@@ -18,7 +19,7 @@ class PrintDialog : public QDialog {
 
 public:
 	explicit PrintDialog(QWidget *parent = 0, Qt::WindowFlags f = 0);
-	virtual ~PrintDialog();
+	~PrintDialog();
 
 private:
 	PrintOptions *optionsWidget;
@@ -32,6 +33,7 @@ private
 slots:
 	void onFinished();
 	void previewClicked();
+	void exportHtmlClicked();
 	void printClicked();
 	void onPaintRequested(QPrinter *);
 	void createPrinterObj();

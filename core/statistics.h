@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * statistics.h
  *
@@ -8,9 +9,13 @@
 #ifndef STATISTICS_H
 #define STATISTICS_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "core/units.h"
+#include "core/dive.h"	// For MAX_CYLINDERS
+
+#define STATS_MAX_DEPTH 300	/* Max depth for stats bucket is 300m */
+#define STATS_DEPTH_BUCKET 10	/* Size of buckets for depth range */
+#define STATS_MAX_TEMP 40		/* Max temp for stats bucket is 40C */
+#define STATS_TEMP_BUCKET 5 /* Size of buckets for temp range */
 
 typedef struct
 {
@@ -24,37 +29,64 @@ typedef struct
 	depth_t max_depth;
 	depth_t min_depth;
 	depth_t avg_depth;
+	depth_t combined_max_depth;
 	volume_t max_sac;
 	volume_t min_sac;
 	volume_t avg_sac;
-	int max_temp;
-	int min_temp;
-	double combined_temp;
+	temperature_t max_temp;
+	temperature_t min_temp;
+	temperature_sum_t combined_temp;
 	unsigned int combined_count;
 	unsigned int selection_size;
-	unsigned int total_sac_time;
+	duration_t total_sac_time;
 	bool is_year;
 	bool is_trip;
 	char *location;
 } stats_t;
-extern stats_t stats_selection;
-extern stats_t *stats_yearly;
-extern stats_t *stats_monthly;
-extern stats_t *stats_by_trip;
-extern stats_t *stats_by_type;
 
-extern char *get_time_string_s(int seconds, int maxdays, bool freediving);
-extern char *get_minutes(int seconds);
-extern void process_all_dives(struct dive *dive, struct dive **prev_dive);
-extern void get_selected_dives_text(char *buffer, size_t size);
-extern void get_gas_used(struct dive *dive, volume_t gases[MAX_CYLINDERS]);
-extern void process_selected_dives(void);
-void selected_dives_gas_parts(volume_t *o2_tot, volume_t *he_tot);
+struct stats_summary {
+	stats_t *stats_yearly;
+	stats_t *stats_monthly;
+	stats_t *stats_by_trip;
+	stats_t *stats_by_type;
+	stats_t *stats_by_depth;
+	stats_t *stats_by_temp;
+};
 
-inline char *get_time_string(int seconds, int maxdays) {
-	return get_time_string_s( seconds,  maxdays, false);
-}
 #ifdef __cplusplus
+extern "C" {
+#endif
+
+extern char *get_minutes(int seconds);
+extern void init_stats_summary(struct stats_summary *stats);
+extern void free_stats_summary(struct stats_summary *stats);
+extern void calculate_stats_summary(struct stats_summary *stats, bool selected_only);
+extern void calculate_stats_selected(stats_t *stats_selection);
+extern void get_gas_used(struct dive *dive, volume_t gases[MAX_CYLINDERS]);
+extern void selected_dives_gas_parts(volume_t *o2_tot, volume_t *he_tot);
+
+#ifdef __cplusplus
+}
+#endif
+
+/*
+ * For C++ code, provide a convenience version of stats_summary
+ * that initializes the structure on construction and frees
+ * resources when it goes out of scope. Apart from that, it
+ * can be used as a stats_summary replacement.
+ */
+#ifdef __cplusplus
+struct stats_summary_auto_free : public stats_summary {
+	stats_summary_auto_free();
+	~stats_summary_auto_free();
+};
+inline stats_summary_auto_free::stats_summary_auto_free()
+{
+	init_stats_summary(this);
+}
+inline stats_summary_auto_free::~stats_summary_auto_free()
+{
+	free_stats_summary(this);
 }
 #endif
 

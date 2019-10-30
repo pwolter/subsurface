@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef TANKITEM_H
 #define TANKITEM_H
 
@@ -14,24 +15,18 @@ class TankItem : public QObject, public QGraphicsRectItem
 
 public:
 	explicit TankItem(QObject *parent = 0);
-	~TankItem();
 	void setHorizontalAxis(DiveCartesianAxis *horizontal);
 	void setData(DivePlotDataModel *model, struct plot_info *plotInfo, struct dive *d);
 
 signals:
 
 public slots:
-	virtual void modelDataChanged(const QModelIndex &topLeft = QModelIndex(), const QModelIndex &bottomRight = QModelIndex());
+	void modelDataChanged(const QModelIndex &topLeft = QModelIndex(), const QModelIndex &bottomRight = QModelIndex());
 
 private:
-	void createBar(qreal x, qreal w, struct gasmix *gas);
-	DivePlotDataModel *dataModel;
+	void createBar(int startTime, int stopTime, struct gasmix gas);
 	DiveCartesianAxis *hAxis;
-	int hDataColumn;
-	struct dive diveCylinderStore;
-	struct plot_data *pInfoEntry;
-	int pInfoNr;
-	qreal height;
+	int plotEndTime;
 	QBrush air, nitrox, oxygen, trimix;
 	QList<QGraphicsRectItem *> rects;
 };

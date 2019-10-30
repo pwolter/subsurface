@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef TESTGPSCOORDS_H
 #define TESTGPSCOORDS_H
 
 #include <QtTest>
 
 class TestGpsCoords : public QObject {
-Q_OBJECT
+	Q_OBJECT
 private slots:
 	void testISO6709DParse();
 	void testNegativeISO6709DParse();
@@ -27,7 +28,7 @@ private slots:
 
 private:
 	static void testParseOK(const QString &txt, double expectedLat,
-		double expectedLon);
+				double expectedLon);
 	static double coord2double(double deg, double min = 0.0, double sec = 0.0);
 };
 

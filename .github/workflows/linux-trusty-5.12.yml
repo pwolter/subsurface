@@ -1,0 +1,46 @@
+name: Linux Qt 5.12
+on:
+  push:
+    branches:
+    - master
+  pull_request:
+    branches:
+    - master
+
+jobs:
+  buildInContainer:
+    runs-on: ubuntu-latest
+    container:
+      image: docker://dirkhh/trusty-qt512:0.7
+
+    steps:
+    - name: checkout sources
+      uses: actions/checkout@v1
+
+    - name: run build
+      run: |
+        cd ..
+        bash -x subsurface/.github/workflows/scripts/linux-in-container-build.sh
+
+    - name: create CI release
+      if: github.event_name == 'push'
+      uses: ./.github/actions/release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPO: ${{ github.repository }}
+        REF: ${{ github.ref }}
+        COMMIT: ${{ github.sha }}
+        BIN1: ./Subsurface.AppImage
+
+    - name: prepare PR artifacts
+      if: github.event_name == 'pull_request'
+      run: |
+        mkdir -p Linux-artifacts
+        mv Subsurface.AppImage Linux-artifacts
+
+    - name: PR artifacts
+      if: github.event_name == 'pull_request'
+      uses: actions/upload-artifact@master
+      with:
+        name: Linux-artifacts
+        path: Linux-artifacts

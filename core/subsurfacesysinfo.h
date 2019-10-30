@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-2.1+
 /****************************************************************************
 **
 ** Copyright (C) 2013 Digia Plc and/or its subsidiary(-ies).
@@ -47,17 +48,6 @@
 
 class SubsurfaceSysInfo : public QSysInfo {
 public:
-#if QT_VERSION < 0x050400
-	static QString buildCpuArchitecture();
-	static QString currentCpuArchitecture();
-	static QString buildAbi();
-
-	static QString kernelType();
-	static QString kernelVersion();
-	static QString productType();
-	static QString productVersion();
-	static QString prettyProductName();
-#endif
 	static QString prettyOsName();
 };
 

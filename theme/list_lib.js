@@ -174,7 +174,6 @@ function setNumberOfDives(e)
 {
 	var value = e.options[e.selectedIndex].value;
 	sizeofpage = parseInt(value, 10);
-	var end = start + sizeofpage - 1;
 	viewInPage();
 }
 
@@ -259,8 +258,7 @@ function putTags(tags)
 */
 function putRating(rating)
 {
-	var result;
-	result = '<div>';
+	var result = '<div>';
 	for (var i = 0; i < rating; i++)
 		result += ' &#9733; ';
 	for (var i = rating; i < 5; i++)
@@ -683,7 +681,6 @@ var statsShows;
 */
 function toggleStats()
 {
-	var stats_button = document.getElementById('stats_button');
 	if (statsShows) {
 		statsShows = false;
 		document.getElementById('diveListPanel').style.display = 'block';
@@ -704,8 +701,7 @@ function showStats()
 
 function getDiveStats()
 {
-	var res = "";
-	res += '<table><tr id="stats_header">';
+	var res = '<table><tr id="stats_header">';
 	res += '<td class="statscell">' + translate.Year + '</td><td class="statscell">#</td><td class="statscell">' + translate.Total_Time + '</td><td class="statscell">' + translate.Average_Time + '</td><td class="statscell">' + translate.Shortest_Time + '</td><td class="statscell">' + translate.Longest_Time + '</td><td class="statscell">' + translate.Average_Depth + '</td><td class="statscell">' + translate.Min_Depth + '</td><td class="statscell">' + translate.Max_Depth + '</td><td class="statscell">' + translate.Average_SAC + '</td><td class="statscell">' + translate.Min_SAC + '</td><td class="statscell">' + translate.Max_SAC + '</td><td class="statscell">' + translate.Average_Temp + '</td><td class="statscell">' + translate.Min_Temp + '</td><td class="statscell">' + translate.Max_Temp + '</td>';
 	res += '</tr>';
 	res += getStatsRows();
@@ -772,7 +768,7 @@ function showtrips()
 {
 	var divelist = document.getElementById('diveslist');
 	divelist.innerHTML = "";
-	for (var i = 0; i < trips.length; i++) {
+	for (var i = trips.length - 1; i >= 0; i--) {
 		divelist.innerHTML += '<ul id="trip_' + i + '" class="trips" onclick="toggle_trip_expansion(' + i + ')">' +
 				      trips[i].name + ' ( ' + trips[i].dives.length + ' dives)' + '</ul>' + '<div id="trip_dive_list_' + i + '"></div>';
 	};
@@ -859,8 +855,7 @@ function get_weights_HTML(dive)
 	if (!dive.Weights.length)
 		return "";
 
-	var result = "";
-	result += '<table><tr><td class="words">' + translate.Weight + '</td><td class="words">' + translate.Type + '</td></tr>';
+	var result = '<table><tr><td class="words">' + translate.Weight + '</td><td class="words">' + translate.Type + '</td></tr>';
 	for (var i in dive.Weights) {
 		result += get_weight_HTML(dive.Weights[i]);
 	}
@@ -904,8 +899,7 @@ function get_cylinders_HTML(dive)
 	if (!dive.Cylinders.length)
 		return "";
 
-	var result = "";
-	result += '<h2 class="det_hed">' + translate.Dive_equipment + '</h2><table><tr><td class="words">' + translate.Type + '</td><td class="words">' + translate.Size + '</td><td class="words">' + translate.Work_Pressure + '</td><td class="words">' + translate.Start_Pressure + '</td><td class="words">' + translate.End_Pressure + '</td><td class="words">'+translate.Gas+'</td></tr>';
+	var result = '<h2 class="det_hed">' + translate.Dive_equipment + '</h2><table><tr><td class="words">' + translate.Type + '</td><td class="words">' + translate.Size + '</td><td class="words">' + translate.Work_Pressure + '</td><td class="words">' + translate.Start_Pressure + '</td><td class="words">' + translate.End_Pressure + '</td><td class="words">'+translate.Gas+'</td></tr>';
 	for (var i in dive.Cylinders) {
 		result += get_cylinder_HTML(dive.Cylinders[i]);
 	}
@@ -941,8 +935,7 @@ function get_bookmarks_HTML(dive)
 {
 	if (!dive.events || dive.events <= 0)
 		return "";
-	var result = "";
-	result += '<h2 class="det_hed">' + translate.Events + '</h2><table><tr><td class="words">' + translate.Name + '</td><td class="words">' + translate.Time + '</td><td class="words">' + translate.Value + '</td></tr>';
+	var result = '<h2 class="det_hed">' + translate.Events + '</h2><table><tr><td class="words">' + translate.Name + '</td><td class="words">' + translate.Time + '</td><td class="words">' + translate.Value + '</td></tr>';
 	for (var i in dive.events) {
 		result += get_bookmark_HTML(dive.events[i]);
 	}
@@ -950,10 +943,11 @@ function get_bookmarks_HTML(dive)
 	return result;
 }
 
-function getDiveCoorString(coordinates){
-	res = "";
-	lat = coordinates.lat;
-	lon = coordinates.lon;
+function getDiveCoorString(coordinates)
+{
+	var res = "";
+	var lat = coordinates.lat;
+	var lon = coordinates.lon;
 	res += float_to_deg(lat) + ' , ' + float_to_deg(lon);
 	return res;
 }
@@ -992,8 +986,7 @@ function put_divecomputer_details(dc)
 	if (dc.length <= 0)
 		return;
 
-	var res = '';
-	res += '<p style="margin:10px;" class="words">Divecomputer:</p>';
+	var res = '<p style="margin:10px;" class="words">Divecomputer:</p>';
 	for (var i =0; i < dc.length; i++) {
 		res += '<table>';
 		res += '<tr><td>Model : </td><td>' + dc[i].model + '</td></tr>';
@@ -1043,7 +1036,7 @@ function remove_missing_photos()
 	var actually_removed = 0;
 
 	console.log(missing_ids.length);
-	for(i = 0; i < missing_ids.length; i++){
+	for(var i = 0; i < missing_ids.length; i++){
 		dive.photos.splice(missing_ids[i] - actually_removed, 1);
 		actually_removed++;
 	}
@@ -1147,7 +1140,7 @@ function mbar_to_bar(mbar)
 
 function mbar_to_psi(mbar)
 {
-	return (mbar * 0.0145037738);
+	return mbar * 0.0145037738;
 }
 
 function mm_to_meter(mm)
@@ -1187,7 +1180,7 @@ function int_to_time(n)
 
 function float_to_deg(flt){
 	var deg = 0 | flt;
-	flt = (flt < 0 ? flt =- flt : flt);
+	flt = (flt < 0 ? - flt : flt);
         var min = 0 | flt % 1 * 60;
         var sec = (0 | flt * 60 % 1 * 6000) / 100;
         return deg + "&deg; " + min + "' " + sec + "\"";

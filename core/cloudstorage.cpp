@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "cloudstorage.h"
 #include "pref.h"
-#include "dive.h"
-#include "helpers.h"
-#include "core/subsurface-qt/SettingsObjectWrapper.h"
+#include "qthelper.h"
+#include "errorhelper.h"
+#include "settings/qPrefCloudStorage.h"
 #include <QApplication>
 
 CloudStorageAuthenticate::CloudStorageAuthenticate(QObject *parent) :
@@ -26,6 +27,7 @@ QNetworkReply* CloudStorageAuthenticate::backend(const QString& email,const QStr
 	} else if (!newpasswd.isEmpty()) {
 		requestUrl = QUrl(CLOUDBACKENDUPDATE);
 		payload += QChar(' ') + newpasswd;
+		cloudNewPassword = newpasswd;
 	} else {
 		requestUrl = QUrl(CLOUDBACKENDVERIFY);
 		payload += QChar(' ') + pin;
@@ -48,31 +50,29 @@ void CloudStorageAuthenticate::uploadFinished()
 
 	QString cloudAuthReply(reply->readAll());
 	qDebug() << "Completed connection with cloud storage backend, response" << cloudAuthReply;
-	CloudStorageSettings csSettings(parent());
+	qPrefCloudStorage csSettings(parent());
 
 	if (cloudAuthReply == QLatin1String("[VERIFIED]") || cloudAuthReply == QLatin1String("[OK]")) {
-		csSettings.setVerificationStatus(CS_VERIFIED);
+		csSettings.set_cloud_verification_status(qPrefCloudStorage::CS_VERIFIED);
 		/* TODO: Move this to a correct place
 		NotificationWidget *nw = MainWindow::instance()->getNotificationWidget();
 		if (nw->getNotificationText() == myLastError)
 			nw->hideNotification();
 		*/
 		myLastError.clear();
-	} else if (cloudAuthReply == QLatin1String("[VERIFY]")) {
-		csSettings.setVerificationStatus(CS_NEED_TO_VERIFY);
+	} else if (cloudAuthReply == QLatin1String("[VERIFY]") ||
+		   cloudAuthReply == QLatin1String("Invalid PIN")) {
+		csSettings.set_cloud_verification_status(qPrefCloudStorage::CS_NEED_TO_VERIFY);
+		report_error(qPrintable(tr("Cloud account verification required, enter PIN in preferences")));
 	} else if (cloudAuthReply == QLatin1String("[PASSWDCHANGED]")) {
-		free(prefs.cloud_storage_password);
-		prefs.cloud_storage_password = prefs.cloud_storage_newpassword;
-		prefs.cloud_storage_newpassword = NULL;
+		csSettings.set_cloud_storage_password(cloudNewPassword);
+		cloudNewPassword.clear();
 		emit passwordChangeSuccessful();
 		return;
 	} else {
-		csSettings.setVerificationStatus(CS_INCORRECT_USER_PASSWD);
+		csSettings.set_cloud_verification_status(qPrefCloudStorage::CS_INCORRECT_USER_PASSWD);
 		myLastError = cloudAuthReply;
 		report_error("%s", qPrintable(cloudAuthReply));
-		/* TODO: Emit a signal with the error
-		MainWindow::instance()->getNotificationWidget()->showNotification(get_error_string(), KMessageWidget::Error);
-		*/
 	}
 	emit finishedAuthenticate();
 }
@@ -82,11 +82,11 @@ void CloudStorageAuthenticate::uploadError(QNetworkReply::NetworkError)
 	qDebug() << "Received error response from cloud storage backend:" << reply->errorString();
 }
 
-void CloudStorageAuthenticate::sslErrors(QList<QSslError> errorList)
+void CloudStorageAuthenticate::sslErrors(const QList<QSslError> &errorList)
 {
 	if (verbose) {
 		qDebug() << "Received error response trying to set up https connection with cloud storage backend:";
-		Q_FOREACH (QSslError err, errorList) {
+		for (QSslError err: errorList) {
 			qDebug() << err.errorString();
 		}
 	}

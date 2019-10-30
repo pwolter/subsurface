@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>507</width>
-    <height>398</height>
+    <height>423</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,7 +15,7 @@
   </property>
   <property name="windowIcon">
    <iconset>
-    <normalon>:/subsurface-icon</normalon>
+    <normalon>:subsurface-icon</normalon>
    </iconset>
   </property>
   <layout class="QGridLayout" name="gridLayout">
@@ -56,34 +56,6 @@
        <property name="bottomMargin">
         <number>0</number>
        </property>
-       <item row="2" column="0" colspan="2">
-        <widget class="QLabel" name="description">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>50</height>
-          </size>
-         </property>
-         <property name="maximumSize">
-          <size>
-           <width>16777215</width>
-           <height>50</height>
-          </size>
-         </property>
-         <property name="text">
-          <string/>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
        <item row="3" column="0">
         <spacer name="verticalSpacer_2">
          <property name="orientation">
@@ -96,123 +68,6 @@
           </size>
          </property>
         </spacer>
-       </item>
-       <item row="0" column="0">
-        <widget class="QGroupBox" name="exportFormat">
-         <property name="title">
-          <string>Export format</string>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
-          <item>
-           <widget class="QRadioButton" name="exportSubsurfaceXML">
-            <property name="maximumSize">
-             <size>
-              <width>171</width>
-              <height>16777215</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>Subsurface &amp;XML</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportUDDF">
-            <property name="maximumSize">
-             <size>
-              <width>110</width>
-              <height>16777215</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>UDDF</string>
-            </property>
-            <property name="checked">
-             <bool>false</bool>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportDivelogs">
-            <property name="text">
-             <string>di&amp;velogs.de</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportDiveshare">
-            <property name="text">
-             <string>DiveShare</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportCSV">
-            <property name="text">
-             <string>CSV dive profile</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportCSVDetails">
-            <property name="text">
-             <string>CSV dive details</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportWorldMap">
-            <property name="text">
-             <string>Worldmap</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportTeX">
-            <property name="text">
-             <string>TeX</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="exportImageDepths">
-            <property name="text">
-             <string>I&amp;mage depths</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">exportGroup</string>
-            </attribute>
-           </widget>
-          </item>
-         </layout>
-        </widget>
        </item>
        <item row="0" column="1">
         <widget class="QWidget" name="widget" native="true">
@@ -279,15 +134,18 @@
           <item>
            <widget class="QGroupBox" name="groupBox">
             <property name="enabled">
-             <bool>false</bool>
+             <bool>true</bool>
             </property>
             <property name="title">
-             <string>CSV units</string>
+             <string>Options</string>
             </property>
             <widget class="QComboBox" name="CSVUnits_2">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
              <property name="geometry">
               <rect>
-               <x>30</x>
+               <x>10</x>
                <y>30</y>
                <width>102</width>
                <height>27</height>
@@ -304,9 +162,207 @@
               </property>
              </item>
             </widget>
+            <widget class="QCheckBox" name="anonymize">
+             <property name="geometry">
+              <rect>
+               <x>10</x>
+               <y>70</y>
+               <width>111</width>
+               <height>20</height>
+              </rect>
+             </property>
+             <property name="text">
+              <string>Anonymize</string>
+             </property>
+            </widget>
            </widget>
           </item>
          </layout>
+        </widget>
+       </item>
+       <item row="0" column="0">
+        <widget class="QGroupBox" name="exportFormat">
+         <property name="title">
+          <string>Export format</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_2">
+          <item>
+           <widget class="QRadioButton" name="exportSubsurfaceXML">
+            <property name="maximumSize">
+             <size>
+              <width>171</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Subsurface &amp;XML</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportSubsurfaceSitesXML">
+            <property name="text">
+             <string>Subsurface dive sites XML</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportUDDF">
+            <property name="maximumSize">
+             <size>
+              <width>110</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>UDDF</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportDivelogs">
+            <property name="text">
+             <string>di&amp;velogs.de</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportDiveshare">
+            <property name="text">
+             <string>DiveShare</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportCSV">
+            <property name="text">
+             <string>CSV dive profile</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportCSVDetails">
+            <property name="text">
+             <string>CSV dive details</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportProfile">
+            <property name="text">
+             <string>Dive profile</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportWorldMap">
+            <property name="text">
+             <string>Worldmap</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportTeX">
+            <property name="text">
+             <string>TeX</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportLaTeX">
+            <property name="text">
+             <string>LaTeX</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportImageDepths">
+            <property name="text">
+             <string>I&amp;mage depths</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="exportProfileData">
+            <property name="text">
+             <string>Profile Data CSV</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">exportGroup</string>
+            </attribute>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item row="2" column="0" colspan="2">
+        <widget class="QLabel" name="description">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>50</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>50</height>
+          </size>
+         </property>
+         <property name="text">
+          <string/>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
         </widget>
        </item>
       </layout>
@@ -552,7 +608,7 @@
    <hints>
     <hint type="sourcelabel">
      <x>248</x>
-     <y>254</y>
+     <y>397</y>
     </hint>
     <hint type="destinationlabel">
      <x>157</x>
@@ -568,7 +624,7 @@
    <hints>
     <hint type="sourcelabel">
      <x>316</x>
-     <y>260</y>
+     <y>397</y>
     </hint>
     <hint type="destinationlabel">
      <x>286</x>
@@ -579,38 +635,38 @@
   <connection>
    <sender>exportCSV</sender>
    <signal>toggled(bool)</signal>
-   <receiver>groupBox</receiver>
+   <receiver>CSVUnits_2</receiver>
    <slot>setEnabled(bool)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>20</x>
-     <y>20</y>
+     <x>39</x>
+     <y>149</y>
     </hint>
     <hint type="destinationlabel">
-     <x>20</x>
-     <y>20</y>
+     <x>322</x>
+     <y>171</y>
     </hint>
    </hints>
   </connection>
   <connection>
    <sender>exportCSVDetails</sender>
    <signal>toggled(bool)</signal>
-   <receiver>groupBox</receiver>
+   <receiver>CSVUnits_2</receiver>
    <slot>setEnabled(bool)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>20</x>
-     <y>20</y>
+     <x>39</x>
+     <y>168</y>
     </hint>
     <hint type="destinationlabel">
-     <x>20</x>
-     <y>20</y>
+     <x>322</x>
+     <y>171</y>
     </hint>
    </hints>
   </connection>
  </connections>
  <buttongroups>
-  <buttongroup name="exportGroup"/>
   <buttongroup name="buttonGroup"/>
+  <buttongroup name="exportGroup"/>
  </buttongroups>
 </ui>

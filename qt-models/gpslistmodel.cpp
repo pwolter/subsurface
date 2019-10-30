@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "qt-models/gpslistmodel.h"
-#include "core/helpers.h"
+#include "core/qthelper.h"
 #include <QVector>
 
-GpsListModel *GpsListModel::m_instance = NULL;
-
-GpsListModel::GpsListModel(QObject *parent) : QAbstractListModel(parent)
+GpsListModel::GpsListModel()
 {
-	m_instance = this;
-}
-
-void GpsListModel::addGpsFix(gpsTracker g)
-{
-	beginInsertColumns(QModelIndex(), rowCount(), rowCount());
-	m_gpsFixes.append(g);
-	endInsertRows();
 }
 
 void GpsListModel::update()
@@ -33,9 +24,8 @@ void GpsListModel::clear()
 	}
 }
 
-int GpsListModel::rowCount(const QModelIndex &parent) const
+int GpsListModel::rowCount(const QModelIndex&) const
 {
-	Q_UNUSED(parent);
 	return m_gpsFixes.count();
 }
 
@@ -53,9 +43,9 @@ QVariant GpsListModel::data(const QModelIndex &index, int role) const
 	else if (role == GpsNameRole)
 		return gt.name;
 	else if (role == GpsLatitudeRole)
-		return QString::number(gt.latitude.udeg / 1000000.0, 'f', 6);
+		return QString::number(gt.location.lat.udeg / 1000000.0, 'f', 6);
 	else if (role == GpsLongitudeRole)
-		return QString::number(gt.longitude.udeg / 1000000.0, 'f', 6);
+		return QString::number(gt.location.lon.udeg / 1000000.0, 'f', 6);
 	return QVariant();
 }
 
@@ -72,6 +62,7 @@ QHash<int, QByteArray> GpsListModel::roleNames() const
 
 GpsListModel *GpsListModel::instance()
 {
-	return m_instance;
+	static GpsListModel self;
+	return &self;
 }
 

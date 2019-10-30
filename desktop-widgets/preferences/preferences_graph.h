@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PREFERENCES_GRAPH_H
 #define PREFERENCES_GRAPH_H
 
@@ -11,9 +12,9 @@ class PreferencesGraph : public AbstractPreferencesWidget {
 	Q_OBJECT
 public:
 	PreferencesGraph();
-	virtual ~PreferencesGraph();
-	virtual void refreshSettings();
-	virtual void syncSettings();
+	~PreferencesGraph();
+	void refreshSettings() override;
+	void syncSettings() override;
 
 private slots:
 	void on_gflow_valueChanged(int gf);
@@ -22,7 +23,6 @@ private slots:
 
 private:
 	Ui::PreferencesGraph *ui;
-
 };
 
 #endif

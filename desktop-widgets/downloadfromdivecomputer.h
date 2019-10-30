@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DOWNLOADFROMDIVECOMPUTER_H
 #define DOWNLOADFROMDIVECOMPUTER_H
 
@@ -6,9 +7,11 @@
 #include <QHash>
 #include <QMap>
 #include <QAbstractTableModel>
+#include <memory>
 
 #include "core/libdivecomputer.h"
 #include "desktop-widgets/configuredivecomputerdialog.h"
+
 #include "ui_downloadfromdivecomputer.h"
 
 #if defined(BT_SUPPORT)
@@ -16,43 +19,8 @@
 #endif
 
 class QStringListModel;
-
-class DownloadThread : public QThread {
-	Q_OBJECT
-public:
-	DownloadThread(QObject *parent, device_data_t *data);
-	virtual void run();
-
-	QString error;
-
-private:
-	device_data_t *data;
-};
-
-class DiveImportedModel : public QAbstractTableModel
-{
-	Q_OBJECT
-public:
-	DiveImportedModel(QObject *o);
-	int columnCount(const QModelIndex& index = QModelIndex()) const;
-	int rowCount(const QModelIndex& index = QModelIndex()) const;
-	QVariant data(const QModelIndex& index, int role) const;
-	QVariant headerData(int section, Qt::Orientation orientation, int role) const;
-	void setImportedDivesIndexes(int first, int last);
-	Qt::ItemFlags flags(const QModelIndex &index) const;
-	void clearTable();
-
-public
-slots:
-	void changeSelected(QModelIndex clickedIndex);
-	void selectAll();
-	void selectNone();
-
-private:
-	int firstIndex;
-	int lastIndex;
-	bool *checkStates;
-};
+class DiveImportedModel;
+class BTDiscovery;
 
 class DownloadFromDCWidget : public QDialog {
 	Q_OBJECT
@@ -64,7 +32,7 @@ public:
 		INITIAL,
 		DOWNLOADING,
 		CANCELLING,
-		ERROR,
+		ERRORED,
 		DONE,
 	};
 
@@ -76,6 +44,7 @@ slots:
 	void on_search_clicked();
 	void on_vendor_currentIndexChanged(const QString &vendor);
 	void on_product_currentIndexChanged(const QString &product);
+	void on_device_currentTextChanged(const QString &device);
 
 	void onDownloadThreadFinished();
 	void updateProgressBar();
@@ -83,6 +52,12 @@ slots:
 	void checkDumpFile(int state);
 	void pickDumpFile();
 	void pickLogFile();
+	void DC1Clicked();
+	void DC2Clicked();
+	void DC3Clicked();
+	void DC4Clicked();
+	int deviceIndex(QString deviceText);
+
 #if defined(BT_SUPPORT)
 	void enableBluetoothMode(int state);
 	void selectRemoteBluetoothDevice();
@@ -91,29 +66,24 @@ slots:
 private:
 	void markChildrenAsDisabled();
 	void markChildrenAsEnabled();
+	void updateDeviceEnabled();
+	void showRememberedDCs();
 
+	QStringListModel vendorModel;
+	QStringListModel productModel;
 	Ui::DownloadFromDiveComputer ui;
-	DownloadThread *thread;
 	bool downloading;
 
-	QStringList vendorList;
-	QHash<QString, QStringList> productList;
-	QMap<QString, dc_descriptor_t *> descriptorLookup;
-	device_data_t data;
 	int previousLast;
 
-	QStringListModel *vendorModel;
-	QStringListModel *productModel;
-	void fill_computer_list();
-	void fill_device_list(int dc_type);
-	QString logFile;
-	QString dumpFile;
+	void fill_device_list(unsigned int transport);
 	QTimer *timer;
 	bool dumpWarningShown;
-	OstcFirmwareCheck *ostcFirmwareCheck;
+	std::unique_ptr<OstcFirmwareCheck> ostcFirmwareCheck;
 	DiveImportedModel *diveImportedModel;
 #if defined(BT_SUPPORT)
 	BtDeviceSelectionDialog *btDeviceSelectionDialog;
+	BTDiscovery *btd;
 #endif
 
 public:

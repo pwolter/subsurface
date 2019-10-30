@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * divelistview.cpp
  *
@@ -17,91 +18,48 @@
 #include <QNetworkReply>
 #include <QStandardPaths>
 #include <QMessageBox>
+#include <QHeaderView>
+#include "core/errorhelper.h"
 #include "core/qthelper.h"
-#include "desktop-widgets/undocommands.h"
+#include "core/trip.h"
+#include "desktop-widgets/command.h"
 #include "desktop-widgets/divelistview.h"
 #include "qt-models/divepicturemodel.h"
 #include "core/metrics.h"
-#include "core/helpers.h"
+#include "desktop-widgets/simplewidgets.h"
+#include "desktop-widgets/mapwidget.h"
 
-//                                #  Date  Rtg Dpth  Dur  Tmp Wght Suit  Cyl  Gas  SAC  OTU  CNS  Px  Loc
-static int defaultWidth[] =    {  70, 140, 90,  50,  50,  50,  50,  70,  50,  50,  70,  50,  50,  5, 500};
-
-DiveListView::DiveListView(QWidget *parent) : QTreeView(parent), mouseClickSelection(false), sortColumn(0),
-	currentOrder(Qt::DescendingOrder), dontEmitDiveChangedSignal(false), selectionSaved(false)
+DiveListView::DiveListView(QWidget *parent) : QTreeView(parent), mouseClickSelection(false),
+	currentLayout(DiveTripModelBase::TREE), dontEmitDiveChangedSignal(false), selectionSaved(false),
+	initialColumnWidths(DiveTripModelBase::COLUMNS, 50)	// Set up with default length 50
 {
 	setItemDelegate(new DiveListDelegate(this));
 	setUniformRowHeights(true);
-	setItemDelegateForColumn(DiveTripModel::RATING, new StarWidgetsDelegate(this));
-	MultiFilterSortModel *model = MultiFilterSortModel::instance();
-	model->setSortRole(DiveTripModel::SORT_ROLE);
-	model->setFilterKeyColumn(-1); // filter all columns
-	model->setFilterCaseSensitivity(Qt::CaseInsensitive);
-	setModel(model);
-	connect(model, SIGNAL(layoutChanged()), this, SLOT(fixMessyQtModelBehaviour()));
+	setItemDelegateForColumn(DiveTripModelBase::RATING, new StarWidgetsDelegate(this));
+	setModel(MultiFilterSortModel::instance());
 
-	setSortingEnabled(false);
+	setSortingEnabled(true);
 	setContextMenuPolicy(Qt::DefaultContextMenu);
 	setSelectionMode(ExtendedSelection);
 	header()->setContextMenuPolicy(Qt::ActionsContextMenu);
 
-	const QFontMetrics metrics(defaultModelFont());
-	int em = metrics.width('m');
-	int zw = metrics.width('0');
+	resetModel();
 
-	// Fixes for the layout needed for mac
-#ifdef Q_OS_MAC
-	int ht = metrics.height();
-	header()->setMinimumHeight(ht + 4);
-#endif
+	// Update selection if all selected dives were hidden by filter
+	connect(MultiFilterSortModel::instance(), &MultiFilterSortModel::filterFinished, this, &DiveListView::filterFinished);
 
-	// TODO FIXME we need this to get the header names
-	// can we find a smarter way?
-	DiveTripModel *tripModel = new DiveTripModel(this);
-
-	// set the default width as a minimum between the hard-coded defaults,
-	// the header text width and the (assumed) content width, calculated
-	// based on type
-	for (int col = DiveTripModel::NR; col < DiveTripModel::COLUMNS; ++col) {
-		QString header_txt = tripModel->headerData(col, Qt::Horizontal, Qt::DisplayRole).toString();
-		int width = metrics.width(header_txt);
-		int sw = 0;
-		switch (col) {
-		case DiveTripModel::NR:
-		case DiveTripModel::DURATION:
-			sw = 8*zw;
-			break;
-		case DiveTripModel::DATE:
-			sw = 14*em;
-			break;
-		case DiveTripModel::RATING:
-			sw = static_cast<StarWidgetsDelegate*>(itemDelegateForColumn(col))->starSize().width();
-			break;
-		case DiveTripModel::SUIT:
-		case DiveTripModel::SAC:
-			sw = 7*em;
-			break;
-		case DiveTripModel::PHOTOS:
-			sw = 5*em;
-			break;
-		case DiveTripModel::LOCATION:
-			sw = 50*em;
-			break;
-		default:
-			sw = 5*em;
-		}
-		if (sw > width)
-			width = sw;
-		width += zw; // small padding
-		if (width > defaultWidth[col])
-			defaultWidth[col] = width;
-	}
-	delete tripModel;
-
+	connect(&diveListNotifier, &DiveListNotifier::tripChanged, this, &DiveListView::tripChanged);
 
 	header()->setStretchLastSection(true);
+	header()->setSortIndicatorShown(true);
+	header()->setSectionsClickable(true);
+	connect(header(), &QHeaderView::sortIndicatorChanged, this, &DiveListView::sortIndicatorChanged);
 
 	installEventFilter(this);
+
+	for (int i = DiveTripModelBase::NR; i < DiveTripModelBase::COLUMNS; i++)
+		calculateInitialColumnWidth(i);
+	setColumnWidths();
 }
 
 DiveListView::~DiveListView()
@@ -109,51 +67,96 @@ DiveListView::~DiveListView()
 	QSettings settings;
 	settings.beginGroup("ListWidget");
 	// don't set a width for the last column - location is supposed to be "the rest"
-	for (int i = DiveTripModel::NR; i < DiveTripModel::COLUMNS - 1; i++) {
+	for (int i = DiveTripModelBase::NR; i < DiveTripModelBase::COLUMNS - 1; i++) {
 		if (isColumnHidden(i))
 			continue;
 		// we used to hardcode them all to 100 - so that might still be in the settings
-		if (columnWidth(i) == 100 || columnWidth(i) == defaultWidth[i])
+		if (columnWidth(i) == 100 || columnWidth(i) == initialColumnWidths[i])
 			settings.remove(QString("colwidth%1").arg(i));
 		else
 			settings.setValue(QString("colwidth%1").arg(i), columnWidth(i));
 	}
-	settings.remove(QString("colwidth%1").arg(DiveTripModel::COLUMNS - 1));
+	settings.remove(QString("colwidth%1").arg(DiveTripModelBase::COLUMNS - 1));
 	settings.endGroup();
 }
 
-void DiveListView::setupUi()
+void DiveListView::resetModel()
+{
+	MultiFilterSortModel::instance()->resetModel(currentLayout);
+	// If the model was reset, we have to reconnect the signals and tell
+	// the filter model to update its source model.
+	connect(DiveTripModelBase::instance(), &DiveTripModelBase::selectionChanged, this, &DiveListView::diveSelectionChanged);
+	connect(DiveTripModelBase::instance(), &DiveTripModelBase::newCurrentDive, this, &DiveListView::currentDiveChanged);
+}
+
+void DiveListView::calculateInitialColumnWidth(int col)
+{
+	const QFontMetrics metrics(defaultModelFont());
+	int em = metrics.width('m');
+	int zw = metrics.width('0');
+
+	QString header_txt = DiveTripModelBase::instance()->headerData(col, Qt::Horizontal, Qt::DisplayRole).toString();
+	int width = metrics.width(header_txt);
+	int sw = 0;
+	switch (col) {
+	case DiveTripModelBase::NR:
+	case DiveTripModelBase::DURATION:
+		sw = 8*zw;
+		break;
+	case DiveTripModelBase::DATE:
+		sw = 14*em;
+		break;
+	case DiveTripModelBase::RATING:
+		sw = static_cast<StarWidgetsDelegate*>(itemDelegateForColumn(col))->starSize().width();
+		break;
+	case DiveTripModelBase::SUIT:
+	case DiveTripModelBase::SAC:
+		sw = 7*em;
+		break;
+	case DiveTripModelBase::PHOTOS:
+		sw = 5*em;
+		break;
+	case DiveTripModelBase::BUDDIES:
+		sw = 50*em;
+		break;
+	case DiveTripModelBase::LOCATION:
+		sw = 50*em;
+		break;
+	default:
+		sw = 5*em;
+	}
+	if (sw > width)
+		width = sw;
+	width += zw; // small padding
+	initialColumnWidths[col] = std::max(initialColumnWidths[col], width);
+}
+
+void DiveListView::setColumnWidths()
 {
 	QSettings settings;
-	static bool firstRun = true;
-	if (firstRun)
-		backupExpandedRows();
+	backupExpandedRows();
 	settings.beginGroup("ListWidget");
 	/* if no width are set, use the calculated width for each column;
 	 * for that to work we need to temporarily expand all rows */
 	expandAll();
-	for (int i = DiveTripModel::NR; i < DiveTripModel::COLUMNS; i++) {
+	for (int i = DiveTripModelBase::NR; i < DiveTripModelBase::COLUMNS; i++) {
 		if (isColumnHidden(i))
 			continue;
 		QVariant width = settings.value(QString("colwidth%1").arg(i));
 		if (width.isValid())
 			setColumnWidth(i, width.toInt());
 		else
-			setColumnWidth(i, defaultWidth[i]);
+			setColumnWidth(i, initialColumnWidths[i]);
 	}
 	settings.endGroup();
-	if (firstRun)
-		restoreExpandedRows();
-	else
-		collapseAll();
-	firstRun = false;
+	restoreExpandedRows();
 	setColumnWidth(lastVisibleColumn(), 10);
 }
 
 int DiveListView::lastVisibleColumn()
 {
 	int lastColumn = -1;
-	for (int i = DiveTripModel::NR; i < DiveTripModel::COLUMNS; i++) {
+	for (int i = DiveTripModelBase::NR; i < DiveTripModelBase::COLUMNS; i++) {
 		if (isColumnHidden(i))
 			continue;
 		lastColumn = i;
@@ -176,12 +179,84 @@ void DiveListView::restoreExpandedRows()
 		setExpanded(model()->index(i, 0), true);
 	setAnimated(true);
 }
-void DiveListView::fixMessyQtModelBehaviour()
+
+// If the model is reset, check which items are trip-items and expand the first column
+void DiveListView::reset()
 {
+	// First, let the QTreeView do its thing.
+	QTreeView::reset();
+
 	QAbstractItemModel *m = model();
-	for (int i = 0; i < model()->rowCount(); i++)
+	for (int i = 0; i < m->rowCount(); ++i) {
 		if (m->rowCount(m->index(i, 0)) != 0)
 			setFirstColumnSpanned(i, QModelIndex(), true);
+	}
+}
+
+// If items were selected, inform the selection model
+void DiveListView::diveSelectionChanged(const QVector<QModelIndex> &indexes)
+{
+	// Since dives are selected dive-by-dive, send only a single signal at the
+	// end, not one for every dive.
+	dontEmitDiveChangedSignal = true;
+
+	clearSelection();
+	MultiFilterSortModel *m = MultiFilterSortModel::instance();
+	QItemSelectionModel *s = selectionModel();
+	for (const QModelIndex &index: indexes) {
+		// We have to transform the indices into local indices, since
+		// there might be sorting or filtering in effect.
+		QModelIndex localIndex = m->mapFromSource(index);
+
+		// It might be possible that the item is not shown (filter is
+		// in effect). Then we get an invalid index and should ignore
+		// this selection.
+		if (!localIndex.isValid())
+			continue;
+
+		s->select(localIndex, QItemSelectionModel::Rows | QItemSelectionModel::Select);
+
+		// If an item of a not-yet expanded trip is selected, expand the trip.
+		if (localIndex.parent().isValid() && !isExpanded(localIndex.parent())) {
+			setAnimated(false);
+			expand(localIndex.parent());
+			setAnimated(true);
+		}
+	}
+
+	dontEmitDiveChangedSignal = false;
+	emit divesSelected();
+}
+
+void DiveListView::currentDiveChanged(QModelIndex index)
+{
+	// Transform the index into a local index, since
+	// there might be sorting or filtering in effect.
+	MultiFilterSortModel *m = MultiFilterSortModel::instance();
+	QModelIndex localIndex = m->mapFromSource(index);
+
+	// Then, set the currently activated row.
+	// Note, we have to use the QItemSelectionModel::Current mode to avoid
+	// changing our selection (in contrast to Qt's documentation, which
+	// instructs to use QItemSelectionModel::NoUpdate, which results in
+	// funny side-effects).
+	selectionModel()->setCurrentIndex(localIndex, QItemSelectionModel::Current);
+}
+
+// If rows are added, check which of these rows is a trip and expand the first column
+void DiveListView::rowsInserted(const QModelIndex &parent, int start, int end)
+{
+	// First, let the QTreeView do its thing.
+	QTreeView::rowsInserted(parent, start, end);
+
+	// Check for each inserted row whether this is a trip and expand the first column
+	QAbstractItemModel *m = model();
+	if (parent.isValid()) // Trips don't have a parent
+		return;
+	for (int i = start; i <= end; ++i) {
+		if (m->rowCount(m->index(i, 0)) != 0)
+			setFirstColumnSpanned(i, QModelIndex(), true);
+	}
 }
 
 // this only remembers dives that were selected, not trips
@@ -192,11 +267,11 @@ void DiveListView::rememberSelection()
 	Q_FOREACH (const QModelIndex &index, selection.indexes()) {
 		if (index.column() != 0) // We only care about the dives, so, let's stick to rows and discard columns.
 			continue;
-		struct dive *d = (struct dive *)index.data(DiveTripModel::DIVE_ROLE).value<void *>();
+		struct dive *d = index.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 		if (d) {
 			selectedDives.insert(d->divetrip, get_divenr(d));
 		} else {
-			struct dive_trip *t = (struct dive_trip *)index.data(DiveTripModel::TRIP_ROLE).value<void *>();
+			struct dive_trip *t = index.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
 			if (t)
 				selectedDives.insert(t, -1);
 		}
@@ -210,9 +285,7 @@ void DiveListView::restoreSelection()
 		return;
 
 	selectionSaved = false;
-	dontEmitDiveChangedSignal = true;
-	unselectDives();
-	dontEmitDiveChangedSignal = false;
+	QList<int> divesToSelect;
 	Q_FOREACH (dive_trip_t *trip, selectedDives.keys()) {
 		QList<int> divesOnTrip = getDivesInTrip(trip);
 		QList<int> selectedDivesOnTrip = selectedDives.values(trip);
@@ -222,8 +295,26 @@ void DiveListView::restoreSelection()
 			selectTrip(trip);
 			selectedDivesOnTrip.removeAll(-1);
 		}
-		selectDives(selectedDivesOnTrip);
+		divesToSelect += selectedDivesOnTrip;
 	}
+	selectDives(divesToSelect);
+}
+
+// This is a bit ugly: we hook directly into the tripChanged signal to
+// select the trip if it was edited. This feels like a layering violation:
+// Shouldn't the core-layer call us?
+void DiveListView::tripChanged(dive_trip *trip, TripField)
+{
+	// First check if the trip is already selected (and only
+	// this trip, as only then is it displayed). Is so, then do nothing.
+	QList<dive_trip *> selected = selectedTrips();
+	if (selected.size() == 1 && selected[0] == trip)
+		return;
+
+	dontEmitDiveChangedSignal = true;
+	unselectDives();
+	dontEmitDiveChangedSignal = false;
+	selectTrip(trip);
 }
 
 void DiveListView::selectTrip(dive_trip_t *trip)
@@ -231,8 +322,8 @@ void DiveListView::selectTrip(dive_trip_t *trip)
 	if (!trip)
 		return;
 
-	QSortFilterProxyModel *m = qobject_cast<QSortFilterProxyModel *>(model());
-	QModelIndexList match = m->match(m->index(0, 0), DiveTripModel::TRIP_ROLE, QVariant::fromValue<void *>(trip), 2, Qt::MatchRecursive);
+	QAbstractItemModel *m = model();
+	QModelIndexList match = m->match(m->index(0, 0), DiveTripModelBase::TRIP_ROLE, QVariant::fromValue(trip), 2, Qt::MatchRecursive);
 	QItemSelectionModel::SelectionFlags flags;
 	if (!match.count())
 		return;
@@ -251,25 +342,23 @@ void DiveListView::selectTrip(dive_trip_t *trip)
 // works as expected
 void DiveListView::clearTripSelection()
 {
-	// we want to make sure no trips are selected
-	disconnect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)), this, SLOT(selectionChanged(QItemSelection, QItemSelection)));
-	disconnect(selectionModel(), SIGNAL(currentChanged(QModelIndex, QModelIndex)), this, SLOT(currentChanged(QModelIndex, QModelIndex)));
+	// This marks the selection change as being internal - ie. we don't process it further.
+	// TODO: This should probably be done differently.
+	auto marker = diveListNotifier.enterCommand();
 
+	// we want to make sure no trips are selected
 	Q_FOREACH (const QModelIndex &index, selectionModel()->selectedRows()) {
-		dive_trip_t *trip = static_cast<dive_trip_t *>(index.data(DiveTripModel::TRIP_ROLE).value<void *>());
+		dive_trip_t *trip = index.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
 		if (!trip)
 			continue;
 		selectionModel()->select(index, QItemSelectionModel::Deselect);
 	}
-
-	connect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)), this, SLOT(selectionChanged(QItemSelection, QItemSelection)));
-	connect(selectionModel(), SIGNAL(currentChanged(QModelIndex, QModelIndex)), this, SLOT(currentChanged(QModelIndex, QModelIndex)));
 }
 
 void DiveListView::unselectDives()
 {
 	// make sure we don't try to redraw the dives during the selection change
-	selected_dive = -1;
+	current_dive = nullptr;
 	amount_selected = 0;
 	// clear the Qt selection
 	selectionModel()->clearSelection();
@@ -288,7 +377,7 @@ QList<dive_trip_t *> DiveListView::selectedTrips()
 {
 	QList<dive_trip_t *> ret;
 	Q_FOREACH (const QModelIndex &index, selectionModel()->selectedRows()) {
-		dive_trip_t *trip = static_cast<dive_trip_t *>(index.data(DiveTripModel::TRIP_ROLE).value<void *>());
+		dive_trip_t *trip = index.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
 		if (!trip)
 			continue;
 		ret.push_back(trip);
@@ -296,17 +385,11 @@ QList<dive_trip_t *> DiveListView::selectedTrips()
 	return ret;
 }
 
-void DiveListView::selectDive(int i, bool scrollto, bool toggle)
+void DiveListView::selectDive(QModelIndex idx, bool scrollto, bool toggle)
 {
-	if (i == -1)
+	if (!idx.isValid())
 		return;
-	QSortFilterProxyModel *m = qobject_cast<QSortFilterProxyModel *>(model());
-	QModelIndexList match = m->match(m->index(0, 0), DiveTripModel::DIVE_IDX, i, 2, Qt::MatchRecursive);
-	QItemSelectionModel::SelectionFlags flags;
-	if (match.isEmpty())
-		return;
-	QModelIndex idx = match.first();
-	flags = toggle ? QItemSelectionModel::Toggle : QItemSelectionModel::Select;
+	QItemSelectionModel::SelectionFlags flags = toggle ? QItemSelectionModel::Toggle : QItemSelectionModel::Select;
 	flags |= QItemSelectionModel::Rows;
 	selectionModel()->setCurrentIndex(idx, flags);
 	if (idx.parent().isValid()) {
@@ -320,6 +403,18 @@ void DiveListView::selectDive(int i, bool scrollto, bool toggle)
 		scrollTo(idx, PositionAtCenter);
 }
 
+void DiveListView::selectDive(int i, bool scrollto, bool toggle)
+{
+	if (i == -1)
+		return;
+	QAbstractItemModel *m = model();
+	QModelIndexList match = m->match(m->index(0, 0), DiveTripModelBase::DIVE_IDX, i, 2, Qt::MatchRecursive);
+	if (match.isEmpty())
+		return;
+	QModelIndex idx = match.first();
+	selectDive(idx, scrollto, toggle);
+}
+
 void DiveListView::selectDives(const QList<int> &newDiveSelection)
 {
 	int firstInList, newSelection;
@@ -329,16 +424,20 @@ void DiveListView::selectDives(const QList<int> &newDiveSelection)
 		return;
 
 	dontEmitDiveChangedSignal = true;
+
+	// First, clear the old selection
+	unselectDives();
+
 	// select the dives, highest index first - this way the oldest of the dives
 	// becomes the selected_dive that we scroll to
 	QList<int> sortedSelection = newDiveSelection;
-	qSort(sortedSelection.begin(), sortedSelection.end());
+	std::sort(sortedSelection.begin(), sortedSelection.end());
 	newSelection = firstInList = sortedSelection.first();
 
 	while (!sortedSelection.isEmpty())
 		selectDive(sortedSelection.takeLast());
 
-	while (selected_dive == -1) {
+	while (!current_dive) {
 		// that can happen if we restored a selection after edit
 		// and the only selected dive is no longer visible because of a filter
 		newSelection--;
@@ -349,18 +448,61 @@ void DiveListView::selectDives(const QList<int> &newDiveSelection)
 		if ((d = get_dive(newSelection)) != NULL && !d->hidden_by_filter)
 			selectDive(newSelection);
 	}
-	QSortFilterProxyModel *m = qobject_cast<QSortFilterProxyModel *>(model());
-	QModelIndexList idxList = m->match(m->index(0, 0), DiveTripModel::DIVE_IDX, selected_dive, 2, Qt::MatchRecursive);
+	QAbstractItemModel *m = model();
+	QModelIndexList idxList = m->match(m->index(0, 0), DiveTripModelBase::DIVE_IDX, get_divenr(current_dive), 2, Qt::MatchRecursive);
 	if (!idxList.isEmpty()) {
 		QModelIndex idx = idxList.first();
 		if (idx.parent().isValid())
 			scrollTo(idx.parent());
 		scrollTo(idx);
 	}
+
+	// update the selected-flag for the dive sites.
+	// the actual reloading of the dive sites will be perfomed
+	// by the main-window in response to the divesSelected signal
+	// emitted below.
+	// But don't do this if we are in divesite mode, because then
+	// the dive-site selection is controlled by the filter not
+	// by the selected dives.
+	if (!MultiFilterSortModel::instance()->diveSiteMode()) {
+		QVector<dive_site *> selectedSites;
+		for (int idx: newDiveSelection) {
+			dive *d = get_dive(idx);
+			if (!d)
+				continue;
+			dive_site *ds = d->dive_site;
+			if (ds && !selectedSites.contains(ds))
+				selectedSites.append(ds);
+		}
+		MapWidget::instance()->setSelected(selectedSites);
+	}
+
 	// now that everything is up to date, update the widgets
-	Q_EMIT currentDiveChanged(selected_dive);
+	emit divesSelected();
 	dontEmitDiveChangedSignal = false;
 	return;
+}
+
+// Get index of first dive. This assumes that trips without dives are never shown.
+// May return an invalid index if no dive is found.
+QModelIndex DiveListView::indexOfFirstDive()
+{
+	// Fetch the first top-level item. If this is a trip, it is supposed to have at least
+	// one child. In that case return the child. Otherwise return the top-level item, which
+	// should be a dive.
+	QAbstractItemModel *m = model();
+	QModelIndex firstDiveOrTrip = m->index(0, 0);
+	if (!firstDiveOrTrip.isValid())
+		return QModelIndex();
+	QModelIndex child = m->index(0, 0, firstDiveOrTrip);
+	return child.isValid() ? child : firstDiveOrTrip;
+}
+
+void DiveListView::selectFirstDive()
+{
+	QModelIndex first = indexOfFirstDive();
+	if (first.isValid())
+		setCurrentIndex(first);
 }
 
 bool DiveListView::eventFilter(QObject *, QEvent *event)
@@ -377,78 +519,41 @@ bool DiveListView::eventFilter(QObject *, QEvent *event)
 	return true;
 }
 
-// NOTE! This loses trip selection, because while we remember the
-// dives, we don't remember the trips (see the "currentSelectedDives"
-// list). I haven't figured out how to look up the trip from the
-// index. TRIP_ROLE vs DIVE_ROLE?
-void DiveListView::headerClicked(int i)
+void DiveListView::sortIndicatorChanged(int i, Qt::SortOrder order)
 {
-	DiveTripModel::Layout newLayout = i == (int)DiveTripModel::NR ? DiveTripModel::TREE : DiveTripModel::LIST;
-	rememberSelection();
-	unselectDives();
+	DiveTripModelBase::Layout newLayout = i == (int)DiveTripModelBase::NR ? DiveTripModelBase::TREE : DiveTripModelBase::LIST;
 	/* No layout change? Just re-sort, and scroll to first selection, making sure all selections are expanded */
 	if (currentLayout == newLayout) {
-		currentOrder = (currentOrder == Qt::DescendingOrder) ? Qt::AscendingOrder : Qt::DescendingOrder;
-		sortByColumn(i, currentOrder);
+		sortByColumn(i, order);
 	} else {
 		// clear the model, repopulate with new indexes.
-		if (currentLayout == DiveTripModel::TREE) {
+		rememberSelection();
+		unselectDives();
+		if (currentLayout == DiveTripModelBase::TREE)
 			backupExpandedRows();
-		}
-		reload(newLayout, false);
-		currentOrder = Qt::DescendingOrder;
-		sortByColumn(i, currentOrder);
-		if (newLayout == DiveTripModel::TREE) {
+		currentLayout = newLayout;
+		resetModel();
+		sortByColumn(i, order);
+		if (newLayout == DiveTripModelBase::TREE)
 			restoreExpandedRows();
-		}
+		restoreSelection();
 	}
-	restoreSelection();
-	// remember the new sort column
-	sortColumn = i;
 }
 
-void DiveListView::reload(DiveTripModel::Layout layout, bool forceSort)
+void DiveListView::setSortOrder(int i, Qt::SortOrder order)
 {
-	// we want to run setupUi() once we actually are displaying something
-	// in the widget
-	static bool first = true;
-	if (first && dive_table.nr > 0) {
-		setupUi();
-		first = false;
-	}
-	if (layout == DiveTripModel::CURRENT)
-		layout = currentLayout;
+	// The QHeaderView will call our signal if the sort order changed
+	header()->setSortIndicator(i, order);
+}
+
+void DiveListView::reload()
+{
+	resetModel();
+
+	if (amount_selected && current_dive != NULL)
+		selectDive(get_divenr(current_dive), true);
 	else
-		currentLayout = layout;
-
-	header()->setSectionsClickable(true);
-	connect(header(), SIGNAL(sectionPressed(int)), this, SLOT(headerClicked(int)), Qt::UniqueConnection);
-
-	QSortFilterProxyModel *m = qobject_cast<QSortFilterProxyModel *>(model());
-	QAbstractItemModel *oldModel = m->sourceModel();
-	if (oldModel) {
-		oldModel->deleteLater();
-	}
-	DiveTripModel *tripModel = new DiveTripModel(this);
-	tripModel->setLayout(layout);
-
-	m->setSourceModel(tripModel);
-
-	if (!forceSort)
-		return;
-
-	sortByColumn(sortColumn, currentOrder);
-	if (amount_selected && current_dive != NULL) {
-		selectDive(selected_dive, true);
-	} else {
-		QModelIndex firstDiveOrTrip = m->index(0, 0);
-		if (firstDiveOrTrip.isValid()) {
-			if (m->index(0, 0, firstDiveOrTrip).isValid())
-				setCurrentIndex(m->index(0, 0, firstDiveOrTrip));
-			else
-				setCurrentIndex(firstDiveOrTrip);
-		}
-	}
+		selectFirstDive();
 	if (selectedIndexes().count()) {
 		QModelIndex curr = selectedIndexes().first();
 		curr = curr.parent().isValid() ? curr.parent() : curr;
@@ -458,9 +563,6 @@ void DiveListView::reload(DiveTripModel::Layout layout, bool forceSort)
 			scrollTo(curr);
 			setAnimated(true);
 		}
-	}
-	if (currentLayout == DiveTripModel::TREE) {
-		fixMessyQtModelBehaviour();
 	}
 }
 
@@ -475,14 +577,15 @@ void DiveListView::reloadHeaderActions()
 			QString title = QString("%1").arg(model()->headerData(i, Qt::Horizontal).toString());
 			QString settingName = QString("showColumn%1").arg(i);
 			QAction *a = new QAction(title, header());
-			bool showHeaderFirstRun = !(i == DiveTripModel::MAXCNS ||
-						    i == DiveTripModel::GAS ||
-						    i == DiveTripModel::OTU ||
-						    i == DiveTripModel::TEMPERATURE ||
-						    i == DiveTripModel::TOTALWEIGHT ||
-						    i == DiveTripModel::SUIT ||
-						    i == DiveTripModel::CYLINDER ||
-						    i == DiveTripModel::SAC);
+			bool showHeaderFirstRun = !(i == DiveTripModelBase::MAXCNS ||
+						    i == DiveTripModelBase::GAS ||
+						    i == DiveTripModelBase::OTU ||
+						    i == DiveTripModelBase::TEMPERATURE ||
+						    i == DiveTripModelBase::TOTALWEIGHT ||
+						    i == DiveTripModelBase::SUIT ||
+						    i == DiveTripModelBase::CYLINDER ||
+						    i == DiveTripModelBase::SAC ||
+						    i == DiveTripModelBase::TAGS);
 			bool shown = s.value(settingName, showHeaderFirstRun).toBool();
 			a->setCheckable(true);
 			a->setChecked(shown);
@@ -506,19 +609,35 @@ void DiveListView::toggleColumnVisibilityByIndex()
 	QAction *action = qobject_cast<QAction *>(sender());
 	if (!action)
 		return;
+	const int idx = action->property("index").toInt();
+
+	// Count the number of visible columns.
+	int totalVisible = 0, lastVisibleIdx = -1;
+	for (int i = 0; i < model()->columnCount(); i++) {
+		if (isColumnHidden(i))
+			continue;
+		totalVisible++;
+		lastVisibleIdx = i;
+	}
+	// If there is only one visible column and we are performing an action on it,
+	// don't hide the column and revert the action back to checked == true.
+	// This keeps one column visible at all times.
+	if (totalVisible == 1 && idx == lastVisibleIdx) {
+		action->setChecked(true);
+		return;
+	}
 
 	QSettings s;
 	s.beginGroup("DiveListColumnState");
 	s.setValue(action->property("settingName").toString(), action->isChecked());
 	s.endGroup();
 	s.sync();
-	setColumnHidden(action->property("index").toInt(), !action->isChecked());
+	setColumnHidden(idx, !action->isChecked());
 	setColumnWidth(lastVisibleColumn(), 10);
 }
 
-void DiveListView::currentChanged(const QModelIndex &current, const QModelIndex &previous)
+void DiveListView::currentChanged(const QModelIndex &current, const QModelIndex&)
 {
-	Q_UNUSED(previous)
 	if (!isVisible())
 		return;
 	if (!current.isValid())
@@ -528,32 +647,41 @@ void DiveListView::currentChanged(const QModelIndex &current, const QModelIndex 
 
 void DiveListView::selectionChanged(const QItemSelection &selected, const QItemSelection &deselected)
 {
-	QItemSelection newSelected = selected.size() ? selected : selectionModel()->selection();
-	QItemSelection newDeselected = deselected;
+	if (diveListNotifier.inCommand()) {
+		// This is a programmatical change of the selection.
+		// Call the QTreeView base function to reflect the selection in the display,
+		// but don't process it any further.
+		QTreeView::selectionChanged(selected, deselected);
+		return;
+	}
 
-	disconnect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)), this, SLOT(selectionChanged(QItemSelection, QItemSelection)));
-	disconnect(selectionModel(), SIGNAL(currentChanged(QModelIndex, QModelIndex)), this, SLOT(currentChanged(QModelIndex, QModelIndex)));
+	// This is a manual selection change. This means that the core does not yet know
+	// of the new selection. Update the core-structures accordingly and select/deselect
+	// all dives of a trip if a trip is selected/deselected.
+	const QItemSelection &newDeselected = deselected;
+
+	QItemSelection newSelected = selected.size() ? selected : selectionModel()->selection();
 
 	Q_FOREACH (const QModelIndex &index, newDeselected.indexes()) {
 		if (index.column() != 0)
 			continue;
 		const QAbstractItemModel *model = index.model();
-		struct dive *dive = (struct dive *)model->data(index, DiveTripModel::DIVE_ROLE).value<void *>();
+		struct dive *dive = model->data(index, DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 		if (!dive) // it's a trip!
-			deselect_dives_in_trip((dive_trip_t *)model->data(index, DiveTripModel::TRIP_ROLE).value<void *>());
+			deselect_dives_in_trip(model->data(index, DiveTripModelBase::TRIP_ROLE).value<dive_trip *>());
 		else
-			deselect_dive(get_divenr(dive));
+			deselect_dive(dive);
 	}
 	Q_FOREACH (const QModelIndex &index, newSelected.indexes()) {
 		if (index.column() != 0)
 			continue;
 
 		const QAbstractItemModel *model = index.model();
-		struct dive *dive = (struct dive *)model->data(index, DiveTripModel::DIVE_ROLE).value<void *>();
+		struct dive *dive = model->data(index, DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 		if (!dive) { // it's a trip!
 			if (model->rowCount(index)) {
 				QItemSelection selection;
-				select_dives_in_trip((dive_trip_t *)model->data(index, DiveTripModel::TRIP_ROLE).value<void *>());
+				select_dives_in_trip(model->data(index, DiveTripModelBase::TRIP_ROLE).value<dive_trip *>());
 				selection.select(index.child(0, 0), index.child(model->rowCount(index) - 1, 0));
 				selectionModel()->select(selection, QItemSelectionModel::Select | QItemSelectionModel::Rows);
 				selectionModel()->setCurrentIndex(index, QItemSelectionModel::Select | QItemSelectionModel::NoUpdate);
@@ -561,14 +689,31 @@ void DiveListView::selectionChanged(const QItemSelection &selected, const QItemS
 					expand(index);
 			}
 		} else {
-			select_dive(get_divenr(dive));
+			select_dive(dive);
 		}
 	}
+	if (!dontEmitDiveChangedSignal) {
+		// When receiving the divesSelected signal the main window will
+		// instruct the map to update the flags. Thus, make sure that
+		// the selected maps are registered correctly.
+		// But don't do this if we are in divesite mode, because then
+		// the dive-site selection is controlled by the filter not
+		// by the selected dives.
+		if (!MultiFilterSortModel::instance()->diveSiteMode()) {
+			QVector<dive_site *> selectedSites;
+			for (QModelIndex index: selectionModel()->selection().indexes()) {
+				const QAbstractItemModel *model = index.model();
+				struct dive *dive = model->data(index, DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
+				if (dive && dive->dive_site)
+					selectedSites.push_back(dive->dive_site);
+			}
+			MapWidget::instance()->setSelected(selectedSites);
+		}
+		emit divesSelected();
+	}
+
+	// Display the new, processed, selection
 	QTreeView::selectionChanged(selectionModel()->selection(), newDeselected);
-	connect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)), this, SLOT(selectionChanged(QItemSelection, QItemSelection)));
-	connect(selectionModel(), SIGNAL(currentChanged(QModelIndex, QModelIndex)), this, SLOT(currentChanged(QModelIndex, QModelIndex)));
-	if (!dontEmitDiveChangedSignal)
-		Q_EMIT currentDiveChanged(selected_dive);
 }
 
 enum asked_user {NOTYET, MERGE, DONTMERGE};
@@ -583,8 +728,8 @@ static bool can_merge(const struct dive *a, const struct dive *b, enum asked_use
 	if (dive_endtime(a) + 30 * 60 < b->when) {
 		if (*have_asked == NOTYET) {
 			if (QMessageBox::warning(MainWindow::instance(),
-						 MainWindow::instance()->tr("Warning"),
-						 MainWindow::instance()->tr("Trying to merge dives with %1min interval in between").arg(
+						 MainWindow::tr("Warning"),
+						 MainWindow::tr("Trying to merge dives with %1min interval in between").arg(
 							 (b->when - dive_endtime(a)) / 60),
 					     QMessageBox::Ok | QMessageBox::Cancel) == QMessageBox::Cancel) {
 				*have_asked = DONTMERGE;
@@ -603,21 +748,30 @@ static bool can_merge(const struct dive *a, const struct dive *b, enum asked_use
 void DiveListView::mergeDives()
 {
 	int i;
-	struct dive *dive, *maindive = NULL;
+	struct dive *d;
 	enum asked_user have_asked = NOTYET;
 
-	for_each_dive (i, dive) {
-		if (dive->selected) {
-			if (!can_merge(maindive, dive, &have_asked)) {
-				maindive = dive;
-			} else {
-				maindive = merge_two_dives(maindive, dive);
-				i--; // otherwise we skip a dive in the freshly changed list
-			}
+	// Collect a vector of batches of dives to merge (i.e. a vector of vector of dives)
+	QVector<QVector<dive *>> merge_batches;
+	QVector<dive *> current_batch;
+	for_each_dive (i, d) {
+		if (!d->selected)
+			continue;
+		if (current_batch.empty()) {
+			current_batch.append(d);
+		} else if (can_merge(current_batch.back(), d, &have_asked)) {
+			current_batch.append(d);
+		} else {
+			if (current_batch.count() > 1)
+				merge_batches.append(current_batch);
+			current_batch.clear();
 		}
 	}
-	MainWindow::instance()->refreshProfile();
-	MainWindow::instance()->refreshDisplay();
+	if (current_batch.count() > 1)
+		merge_batches.append(current_batch);
+
+	for (const QVector<dive *> &batch: merge_batches)
+		Command::mergeDives(batch);
 }
 
 void DiveListView::splitDives()
@@ -625,12 +779,14 @@ void DiveListView::splitDives()
 	int i;
 	struct dive *dive;
 
+	// Let's collect the dives to be split first, so that we don't catch newly inserted dives!
+	QVector<struct dive *> dives;
 	for_each_dive (i, dive) {
 		if (dive->selected)
-			split_dive(dive);
+			dives.append(dive);
 	}
-	MainWindow::instance()->refreshProfile();
-	MainWindow::instance()->refreshDisplay();
+	for (struct dive *d: dives)
+		Command::splitDives(d, duration_t{-1});
 }
 
 void DiveListView::renumberDives()
@@ -644,17 +800,11 @@ void DiveListView::merge_trip(const QModelIndex &a, int offset)
 	int i = a.row() + offset;
 	QModelIndex b = a.sibling(i, 0);
 
-	dive_trip_t *trip_a = (dive_trip_t *)a.data(DiveTripModel::TRIP_ROLE).value<void *>();
-	dive_trip_t *trip_b = (dive_trip_t *)b.data(DiveTripModel::TRIP_ROLE).value<void *>();
+	dive_trip_t *trip_a = a.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
+	dive_trip_t *trip_b = b.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
 	if (trip_a == trip_b || !trip_a || !trip_b)
 		return;
-	combine_trips(trip_a, trip_b);
-	rememberSelection();
-	reload(currentLayout, false);
-	fixMessyQtModelBehaviour();
-	restoreSelection();
-	mark_divelist_changed(true);
-	//TODO: emit a signal to signalize that the divelist changed?
+	Command::mergeTrips(trip_a, trip_b);
 }
 
 void DiveListView::mergeTripAbove()
@@ -672,40 +822,27 @@ void DiveListView::removeFromTrip()
 	//TODO: move this to C-code.
 	int i;
 	struct dive *d;
-	QMap<struct dive*, dive_trip*> divesToRemove;
+	QVector<dive *> divesToRemove;
 	for_each_dive (i, d) {
-		if (d->selected)
-			divesToRemove.insert(d, d->divetrip);
+		if (d->selected && d->divetrip)
+			divesToRemove.append(d);
 	}
-	UndoRemoveDivesFromTrip *undoCommand = new UndoRemoveDivesFromTrip(divesToRemove);
-	MainWindow::instance()->undoStack->push(undoCommand);
-
-	rememberSelection();
-	reload(currentLayout, false);
-	fixMessyQtModelBehaviour();
-	restoreSelection();
-	mark_divelist_changed(true);
+	Command::removeDivesFromTrip(divesToRemove);
 }
 
 void DiveListView::newTripAbove()
 {
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
+	struct dive *d = contextMenuIndex.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 	if (!d) // shouldn't happen as we only are setting up this action if this is a dive
 		return;
 	//TODO: port to c-code.
-	dive_trip_t *trip;
 	int idx;
-	rememberSelection();
-	trip = create_and_hookup_trip_from_dive(d);
+	QVector<dive *> dives;
 	for_each_dive (idx, d) {
 		if (d->selected)
-			add_dive_to_trip(d, trip);
+			dives.append(d);
 	}
-	trip->expanded = 1;
-	reload(currentLayout, false);
-	fixMessyQtModelBehaviour();
-	mark_divelist_changed(true);
-	restoreSelection();
+	Command::createTrip(dives);
 }
 
 void DiveListView::addToTripBelow()
@@ -720,38 +857,40 @@ void DiveListView::addToTripAbove()
 
 void DiveListView::addToTrip(int delta)
 {
-	// if there is a trip above / below, then it's a sibling at the same
-	// level as this dive. So let's take a look
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
-	QModelIndex t = contextMenuIndex.sibling(contextMenuIndex.row() + delta, 0);
-	dive_trip_t *trip = (dive_trip_t *)t.data(DiveTripModel::TRIP_ROLE).value<void *>();
+	// d points to the row that has (mouse-)pointer focus, and there are nr rows selected
+	struct dive *d = contextMenuIndex.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
+	int nr = selectionModel()->selectedRows().count();
+	QModelIndex t;
+	dive_trip_t *trip = NULL;
+
+	// now look for the trip to add to, for this, loop over the selected dives and
+	// check if its sibling is a trip.
+	for (int i = 1; i <= nr; i++) {
+		t = contextMenuIndex.sibling(contextMenuIndex.row() + (delta > 0 ? i: i * -1), 0);
+		trip = t.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
+		if (trip)
+			break;
+	}
 
 	if (!trip || !d)
 		// no dive, no trip? get me out of here
 		return;
 
-	rememberSelection();
-
-	add_dive_to_trip(d, trip);
+	QVector<dive *> dives;
 	if (d->selected) { // there are possibly other selected dives that we should add
 		int idx;
 		for_each_dive (idx, d) {
 			if (d->selected)
-				add_dive_to_trip(d, trip);
+				dives.append(d);
 		}
 	}
-	trip->expanded = 1;
-	mark_divelist_changed(true);
-
-	reload(currentLayout, false);
-	restoreSelection();
-	fixMessyQtModelBehaviour();
+	Command::addDivesToTrip(dives, trip);
 }
 
 void DiveListView::markDiveInvalid()
 {
 	int i;
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
+	struct dive *d = contextMenuIndex.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 	if (!d)
 		return;
 	for_each_dive (i, d) {
@@ -761,63 +900,26 @@ void DiveListView::markDiveInvalid()
 		// now mark the dive invalid... how do we do THAT?
 		// d->invalid = true;
 	}
-	if (amount_selected == 0) {
-		MainWindow::instance()->cleanUpEmpty();
-	}
 	mark_divelist_changed(true);
 	MainWindow::instance()->refreshDisplay();
 	if (prefs.display_invalid_dives == false) {
 		clearSelection();
-		// select top dive that isn't marked invalid
-		rememberSelection();
 	}
-	fixMessyQtModelBehaviour();
 }
 
 void DiveListView::deleteDive()
 {
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
+	struct dive *d = contextMenuIndex.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
 	if (!d)
 		return;
 
 	int i;
-	int lastDiveNr = -1;
-	QList<struct dive*> deletedDives; //a list of all deleted dives to be stored in the undo command
+	QVector<struct dive*> deletedDives;
 	for_each_dive (i, d) {
-		if (!d->selected)
-			continue;
-		deletedDives.append(d);
-		lastDiveNr = i;
+		if (d->selected)
+			deletedDives.append(d);
 	}
-	// the actual dive deletion is happening in the redo command that is implicitly triggered
-	UndoDeleteDive *undoEntry = new UndoDeleteDive(deletedDives);
-	MainWindow::instance()->undoStack->push(undoEntry);
-	if (amount_selected == 0) {
-		MainWindow::instance()->cleanUpEmpty();
-	}
-	mark_divelist_changed(true);
-	MainWindow::instance()->refreshDisplay();
-	if (lastDiveNr != -1) {
-		clearSelection();
-		selectDive(lastDiveNr);
-		rememberSelection();
-	}
-	fixMessyQtModelBehaviour();
-}
-
-void DiveListView::testSlot()
-{
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
-	if (d) {
-		qDebug("testSlot called on dive #%d", d->number);
-	} else {
-		QModelIndex child = contextMenuIndex.child(0, 0);
-		d = (struct dive *)child.data(DiveTripModel::DIVE_ROLE).value<void *>();
-		if (d)
-			qDebug("testSlot called on trip including dive #%d", d->number);
-		else
-			qDebug("testSlot called on trip with no dive");
-	}
+	Command::deleteDive(deletedDives);
 }
 
 void DiveListView::contextMenuEvent(QContextMenuEvent *event)
@@ -825,17 +927,17 @@ void DiveListView::contextMenuEvent(QContextMenuEvent *event)
 	QAction *collapseAction = NULL;
 	// let's remember where we are
 	contextMenuIndex = indexAt(event->pos());
-	struct dive *d = (struct dive *)contextMenuIndex.data(DiveTripModel::DIVE_ROLE).value<void *>();
-	dive_trip_t *trip = (dive_trip_t *)contextMenuIndex.data(DiveTripModel::TRIP_ROLE).value<void *>();
+	struct dive *d = contextMenuIndex.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>();
+	dive_trip_t *trip = contextMenuIndex.data(DiveTripModelBase::TRIP_ROLE).value<dive_trip *>();
 	QMenu popup(this);
-	if (currentLayout == DiveTripModel::TREE) {
+	if (currentLayout == DiveTripModelBase::TREE) {
 		// verify if there is a node that`s not expanded.
 		bool needs_expand = false;
 		bool needs_collapse = false;
 		uint expanded_nodes = 0;
 		for(int i = 0, end = model()->rowCount(); i < end; i++) {
 			QModelIndex idx = model()->index(i, 0);
-			if (idx.data(DiveTripModel::DIVE_ROLE).value<void *>())
+			if (idx.data(DiveTripModelBase::DIVE_ROLE).value<struct dive *>())
 				continue;
 
 			if (!isExpanded(idx)) {
@@ -846,21 +948,22 @@ void DiveListView::contextMenuEvent(QContextMenuEvent *event)
 			}
 		}
 		if (needs_expand)
-			popup.addAction(tr("Expand all"), this, SLOT(expandAll()));
+			popup.addAction(tr("Expand all"), this, &QTreeView::expandAll);
 		if (needs_collapse)
-			popup.addAction(tr("Collapse all"), this, SLOT(collapseAll()));
+			popup.addAction(tr("Collapse all"), this, &QTreeView::collapseAll);
 
 		// verify if there`s a need for collapse others
 		if (expanded_nodes > 1)
-			collapseAction = popup.addAction(tr("Collapse others"), this, SLOT(collapseAll()));
+			collapseAction = popup.addAction(tr("Collapse others"), this, &QTreeView::collapseAll);
 
 
 		if (d) {
-			popup.addAction(tr("Remove dive(s) from trip"), this, SLOT(removeFromTrip()));
-			popup.addAction(tr("Create new trip above"), this, SLOT(newTripAbove()));
+			popup.addAction(tr("Remove dive(s) from trip"), this, &DiveListView::removeFromTrip);
+			popup.addAction(tr("Create new trip above"), this, &DiveListView::newTripAbove);
 			if (!d->divetrip) {
 				struct dive *top = d;
 				struct dive *bottom = d;
+				Qt::SortOrder currentOrder = header()->sortIndicatorOrder();
 				if (d->selected) {
 					if (currentOrder == Qt::AscendingOrder) {
 						top = first_selected_dive();
@@ -871,30 +974,30 @@ void DiveListView::contextMenuEvent(QContextMenuEvent *event)
 					}
 				}
 				if (is_trip_before_after(top, (currentOrder == Qt::AscendingOrder)))
-					popup.addAction(tr("Add dive(s) to trip immediately above"), this, SLOT(addToTripAbove()));
+					popup.addAction(tr("Add dive(s) to trip immediately above"), this, &DiveListView::addToTripAbove);
 				if (is_trip_before_after(bottom, (currentOrder == Qt::DescendingOrder)))
-					popup.addAction(tr("Add dive(s) to trip immediately below"), this, SLOT(addToTripBelow()));
+					popup.addAction(tr("Add dive(s) to trip immediately below"), this, &DiveListView::addToTripBelow);
 			}
 		}
 		if (trip) {
-			popup.addAction(tr("Merge trip with trip above"), this, SLOT(mergeTripAbove()));
-			popup.addAction(tr("Merge trip with trip below"), this, SLOT(mergeTripBelow()));
+			popup.addAction(tr("Merge trip with trip above"), this, &DiveListView::mergeTripAbove);
+			popup.addAction(tr("Merge trip with trip below"), this, &DiveListView::mergeTripBelow);
 		}
 	}
 	if (d) {
-		popup.addAction(tr("Delete dive(s)"), this, SLOT(deleteDive()));
+		popup.addAction(tr("Delete dive(s)"), this, &DiveListView::deleteDive);
 #if 0
-		popup.addAction(tr("Mark dive(s) invalid", this, SLOT(markDiveInvalid())));
+		popup.addAction(tr("Mark dive(s) invalid", this, &DiveListView::markDiveInvalid);
 #endif
 	}
 	if (amount_selected > 1 && consecutive_selected())
-		popup.addAction(tr("Merge selected dives"), this, SLOT(mergeDives()));
+		popup.addAction(tr("Merge selected dives"), this, &DiveListView::mergeDives);
 	if (amount_selected >= 1) {
-		popup.addAction(tr("Renumber dive(s)"), this, SLOT(renumberDives()));
-		popup.addAction(tr("Shift dive times"), this, SLOT(shiftTimes()));
-		popup.addAction(tr("Split selected dives"), this, SLOT(splitDives()));
-		popup.addAction(tr("Load image(s) from file(s)"), this, SLOT(loadImages()));
-		popup.addAction(tr("Load image from web"), this, SLOT(loadWebImages()));
+		popup.addAction(tr("Renumber dive(s)"), this, &DiveListView::renumberDives);
+		popup.addAction(tr("Shift dive times"), this, &DiveListView::shiftTimes);
+		popup.addAction(tr("Split selected dives"), this, &DiveListView::splitDives);
+		popup.addAction(tr("Load media from file(s)"), this, &DiveListView::loadImages);
+		popup.addAction(tr("Load media from web"), this, &DiveListView::loadWebImages);
 	}
 
 	// "collapse all" really closes all trips,
@@ -902,7 +1005,7 @@ void DiveListView::contextMenuEvent(QContextMenuEvent *event)
 	QAction *actionTaken = popup.exec(event->globalPos());
 	if (actionTaken == collapseAction && collapseAction) {
 		this->setAnimated(false);
-		selectDive(selected_dive, true);
+		selectDive(get_divenr(current_dive), true);
 		scrollTo(selectedIndexes().first());
 		this->setAnimated(true);
 	}
@@ -916,7 +1019,18 @@ void DiveListView::shiftTimes()
 
 void DiveListView::loadImages()
 {
-	QStringList fileNames = QFileDialog::getOpenFileNames(this, tr("Open image files"), lastUsedImageDir(), tr("Image files (*.jpg *.jpeg *.pnm *.tif *.tiff)"));
+	QStringList m_filters = mediaExtensionFilters();
+	QStringList i_filters = imageExtensionFilters();
+	QStringList v_filters = videoExtensionFilters();
+	QStringList fileNames = QFileDialog::getOpenFileNames(this,
+							      tr("Open media files"),
+							      lastUsedImageDir(),
+							      QString("%1 (%2);;%3 (%4);;%5 (%6);;%7 (*.*)")
+							      .arg(tr("Media files"), m_filters.join(" ")
+							      , tr("Image files"), i_filters.join(" ")
+							      , tr("Video files"), v_filters.join(" ")
+							      , tr("All files")));
+
 	if (fileNames.isEmpty())
 		return;
 	updateLastUsedImageDir(QFileInfo(fileNames[0]).dir().path());
@@ -931,15 +1045,8 @@ void DiveListView::matchImagesToDives(QStringList fileNames)
 		return;
 	updateLastImageTimeOffset(shiftDialog.amount());
 
-	Q_FOREACH (const QString &fileName, fileNames) {
-		int j = 0;
-		struct dive *dive;
-		for_each_dive (j, dive) {
-			if (!dive->selected)
-				continue;
-			dive_create_picture(dive, copy_string(fileName.toUtf8().data()), shiftDialog.amount(), shiftDialog.matchAll());
-		}
-	}
+	for (const QString &fileName: fileNames)
+		create_picture(qPrintable(fileName), shiftDialog.amount(), shiftDialog.matchAll());
 
 	mark_divelist_changed(true);
 	copy_dive(current_dive, &displayed_dive);
@@ -971,13 +1078,12 @@ void DiveListView::loadImageFromURL(QUrl url)
 		if (image.isNull()) {
 			// If this is not an image, maybe it's an html file and Miika can provide some xslr magic to extract images.
 			// In this case we would call the function recursively on the list of image source urls;
-			MainWindow::instance()->getNotificationWidget()->showNotification(tr("%1 does not appear to be an image").arg(url.toString()), KMessageWidget::Error);
+			report_error(qPrintable(tr("%1 does not appear to be an image").arg(url.toString())));
 			return;
 		}
 
-		// Since we already downloaded the image we can cache it as well.
 		QCryptographicHash hash(QCryptographicHash::Sha1);
-		hash.addData(imageData);
+		hash.addData(url.toString().toUtf8());
 		QString path = QStandardPaths::standardLocations(QStandardPaths::CacheLocation).first();
 		QDir dir(path);
 		if (!dir.exists())
@@ -988,14 +1094,23 @@ void DiveListView::loadImageFromURL(QUrl url)
 			stream.writeRawData(imageData.data(), imageData.length());
 			imageFile.waitForBytesWritten(-1);
 			imageFile.close();
-			add_hash(imageFile.fileName(), hash.result());
-			struct picture picture;
-			picture.hash = NULL;
-			picture.filename = strdup(url.toString().toUtf8().data());
-			learnHash(&picture, hash.result());
+			learnPictureFilename(url.toString(), imageFile.fileName());
 			matchImagesToDives(QStringList(url.toString()));
 		}
 	}
+}
+
+void DiveListView::filterFinished()
+{
+	// first make sure the trips are no longer shown as selected
+	// (but without updating the selection state of the dives... this just cleans
+	// up an oddity in the filter handling)
+	clearTripSelection();
+
+	// If there are no more selected dives, select the first visible dive
+	if (!selectionModel()->hasSelection())
+		selectFirstDive();
+	emit divesSelected();
 }
 
 QString DiveListView::lastUsedImageDir()
@@ -1005,8 +1120,8 @@ QString DiveListView::lastUsedImageDir()
 
 	settings.beginGroup("FileDialog");
 	if (settings.contains("LastImageDir"))
-		if (QDir::setCurrent(settings.value("LastImageDir").toString()))
-			lastImageDir = settings.value("LastIamgeDir").toString();
+		if (QDir(settings.value("LastImageDir").toString()).exists())
+			lastImageDir = settings.value("LastImageDir").toString();
 	return lastImageDir;
 }
 
@@ -1033,4 +1148,9 @@ void DiveListView::updateLastImageTimeOffset(const int offset)
 	QSettings s;
 	s.beginGroup("MainWindow");
 	s.setValue("LastImageTimeOffset", offset);
+}
+
+void DiveListView::mouseDoubleClickEvent(QMouseEvent*)
+{
+	return;
 }

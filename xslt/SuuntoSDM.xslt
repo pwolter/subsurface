@@ -4,10 +4,22 @@
   <xsl:output method="xml" indent="yes" encoding="ASCII"/>
 
   <xsl:template match="/">
-    <dives>
-      <program name="subsurface-import" version="1"/>
-      <xsl:apply-templates select="/SUUNTO/MSG"/>
-    </dives>
+    <divelog program="subsurface-import" version="2">
+      <dives>
+        <divecomputer>
+          <xsl:attribute name="model">
+            <xsl:value-of select="concat('Suunto ', /SUUNTO/MSG/DEVICEMODEL)" />
+          </xsl:attribute>
+          <xsl:attribute name="deviceid">
+            <xsl:value-of select="/SUUNTO/MSG/WRISTOPID" />
+          </xsl:attribute>
+          <xsl:attribute name="serial">
+            <xsl:value-of select="/SUUNTO/MSG/WRISTOPID" />
+          </xsl:attribute>
+        </divecomputer>
+        <xsl:apply-templates select="/SUUNTO/MSG"/>
+      </dives>
+    </divelog>
   </xsl:template>
 
   <xsl:template match="MSG">
@@ -41,6 +53,27 @@
         </xsl:choose>
       </xsl:attribute>
 
+      <!-- Custom fields to tags -->
+      <xsl:if test="CUSTOM1|CUSTOM2|CUSTOM3|CUSTOM4|CUSTOM5 != ''">
+        <xsl:attribute name="tags">
+          <xsl:if test="CUSTOM1 != ''">
+            <xsl:value-of select="concat(CUSTOM1, ',')" />
+          </xsl:if>
+          <xsl:if test="CUSTOM2 != ''">
+            <xsl:value-of select="concat(CUSTOM2, ',')" />
+          </xsl:if>
+          <xsl:if test="CUSTOM3 != ''">
+            <xsl:value-of select="concat(CUSTOM3, ',')" />
+          </xsl:if>
+          <xsl:if test="CUSTOM4 != ''">
+            <xsl:value-of select="concat(CUSTOM4, ',')" />
+          </xsl:if>
+          <xsl:if test="CUSTOM5 != ''">
+            <xsl:value-of select="concat(CUSTOM5, ',')" />
+          </xsl:if>
+        </xsl:attribute>
+      </xsl:if>
+
       <xsl:choose>
         <xsl:when test="MEANDEPTH != ''">
           <depth max="{concat(translate(MAXDEPTH, ',', '.'),' m')}" mean="{concat(translate(MEANDEPTH, ',', '.'), ' m')}"/>
@@ -72,10 +105,10 @@
         </xsl:otherwise>
       </xsl:choose>
 
-      <xsl:if test="WEIGHT != ''">
-        <weightsystem>
+      <xsl:if test="WEIGHT|WEIGTH != ''">
+        <weightsystem description='imported'>
           <xsl:attribute name="weight">
-            <xsl:value-of select="concat(translate(WEIGHT, ',', '.'), ' kg')"/>
+            <xsl:value-of select="concat(translate(WEIGHT|WEIGTH, ',', '.'), ' kg')"/>
           </xsl:attribute>
         </weightsystem>
       </xsl:if>

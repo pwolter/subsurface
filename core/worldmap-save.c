@@ -1,13 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
+#ifdef __clang__
 // Clang has a bug on zero-initialization of C structs.
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#include "dive.h"
 #include "membuffer.h"
+#include "divesite.h"
+#include "errorhelper.h"
+#include "file.h"
 #include "save-html.h"
 #include "worldmap-save.h"
 #include "worldmap-options.h"
@@ -16,7 +21,7 @@
 char *getGoogleApi()
 {
 	/* google maps api auth*/
-	return "https://maps.googleapis.com/maps/api/js?key=AIzaSyDzo9PWsqYDDSddVswg_13rpD9oH_dLuoQ";
+	return "https://maps.googleapis.com/maps/api/js?";
 }
 
 void writeMarkers(struct membuffer *b, const bool selected_only)
@@ -31,10 +36,10 @@ void writeMarkers(struct membuffer *b, const bool selected_only)
 				continue;
 		}
 		struct dive_site *ds = get_dive_site_for_dive(dive);
-		if (!ds || !dive_site_has_gps_location(ds))
+		if (!dive_site_has_gps_location(ds))
 			continue;
-		put_degrees(b, ds->latitude, "temp = new google.maps.Marker({position: new google.maps.LatLng(", "");
-		put_degrees(b, ds->longitude, ",", ")});\n");
+		put_degrees(b, ds->location.lat, "temp = new google.maps.Marker({position: new google.maps.LatLng(", "");
+		put_degrees(b, ds->location.lon, ",", ")});\n");
 		put_string(b, "markers.push(temp);\ntempinfowindow = new google.maps.InfoWindow({content: '<div id=\"content\">'+'<div id=\"siteNotice\">'+'</div>'+'<div id=\"bodyContent\">");
 		snprintf(pre, sizeof(pre), "<p>%s ", translate("gettextFromC", "Date:"));
 		put_HTML_date(b, dive, pre, "</p>");

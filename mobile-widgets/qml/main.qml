@@ -1,64 +1,92 @@
-import QtQuick 2.4
-import QtQuick.Controls 1.2
-import QtQuick.Controls.Styles 1.2
+// SPDX-License-Identifier: GPL-2.0
+import QtQuick 2.6
+import QtQuick.Controls 2.0
+import QtQuick.Controls.Material 2.1
 import QtQuick.Window 2.2
 import QtQuick.Dialogs 1.2
-import QtQuick.Layouts 1.1
+import QtQuick.Layouts 1.2
 import QtQuick.Window 2.2
 import org.subsurfacedivelog.mobile 1.0
-import org.kde.kirigami 2.0 as Kirigami
+import org.kde.kirigami 2.4 as Kirigami
+import QtGraphicalEffects 1.0
 
 Kirigami.ApplicationWindow {
 	id: rootItem
 	title: qsTr("Subsurface-mobile")
+	reachableModeEnabled: false // while it's a good idea, it seems to confuse more than help
+	wideScreen: false // workaround for probably Kirigami bug. See commits.
 
-	header: Kirigami.ApplicationHeader {
-		minimumHeight: 0
-		preferredHeight: Kirigami.Units.gridUnit * (Qt.platform.os == "ios" ? 2 : 1)
-		maximumHeight: Kirigami.Units.gridUnit * 2
-	}
-	property bool fullscreen: true
-	property alias oldStatus: manager.oldStatus
-	property alias accessingCloud: manager.accessingCloud
-	property QtObject notification: null
-	property bool showingDiveList: false
-	property alias syncToCloud: manager.syncToCloud
-	property alias showPin: manager.showPin
+	// the documentation claims that the ApplicationWindow should pick up the font set on
+	// the C++ side. But as a matter of fact, it doesn't, unless you add this line:
+	font: Qt.application.font
 
-	onAccessingCloudChanged: {
-		// >= 0 for updating cloud, -1 for hide, < -1 for local storage
-		if (accessingCloud >= 0) {
-			// we now keep updating this to show progress, so timing out after 30 seconds is more useful
-			// but should still be very conservative
-			showPassiveNotification("Accessing Subsurface cloud storage " + accessingCloud +"%", 30000);
-		} else if (accessingCloud < -1) {
-			// local storage should be much faster, so timeout of 5 seconds
-			// the offset of 2 is so that things start 0 again
-			showPassiveNotification("Accessing local storage " + -(accessingCloud + 2) +"%", 5000);
+	pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.Breadcrumb
+	pageStack.globalToolBar.showNavigationButtons: (Kirigami.ApplicationHeaderStyle.ShowBackButton | Kirigami.ApplicationHeaderStyle.ShowForwardButton)
+	pageStack.globalToolBar.minimumHeight: 0
+	pageStack.globalToolBar.preferredHeight: Math.round(Kirigami.Units.gridUnit * (Qt.platform.os == "ios" ? 2 : 1.5))
+	pageStack.globalToolBar.maximumHeight: Kirigami.Units.gridUnit * 2
+
+	property alias oldStatus: prefs.oldStatus
+	property alias notificationText: manager.notificationText
+	property alias locationServiceEnabled: manager.locationServiceEnabled
+	property alias pluggedInDeviceName: manager.pluggedInDeviceName
+	property alias showPin: prefs.showPin
+	property alias defaultCylinderIndex: settingsWindow.defaultCylinderIndex
+	property bool filterToggle: false
+	property string filterPattern: ""
+	property bool firstChange: true
+	property int lastOrientation: undefined
+	property int colWidth: undefined
+
+	onNotificationTextChanged: {
+		if (notificationText != "") {
+			// there's a risk that we have a >5 second gap in update events;
+			// still, keep the timeout at 5s to avoid odd unchanging notifications
+			showPassiveNotification(notificationText, 5000)
 		} else {
+			// hiding the notification right away may be a mistake as it hides the last warning / error
 			hidePassiveNotification();
 		}
 	}
-
 	FontMetrics {
 		id: fontMetrics
 		Component.onCompleted: {
-			if (Math.round(rootItem.width / Kirigami.Units.gridUnit) < 20) {
-				fontMetrics.font.pointSize = fontMetrics.font.pointSize * 2 / 3
-				Kirigami.Theme.defaultFont.pointSize = fontMetrics.font.pointSize
-				console.log("Reduce font size for narrow screens: " + fontMetrics.font.pointSize)
-			}
+			console.log("Using the following font: " + fontMetrics.font.family
+				    + " at " + subsurfaceTheme.basePointSize + "pt" +
+				    " with mobile_scale: " + PrefDisplay.mobile_scale)
 		}
 	}
-
 	visible: false
 
-	// TODO: Verify where the opacity went to.
-	// opacity: 0
+	BusyIndicator {
+		id: busy
+		running: false
+		height: 6 * Kirigami.Units.gridUnit
+		width: 6 * Kirigami.Units.gridUnit
+		anchors.centerIn: parent
+	}
+
+	function showBusy() {
+		busy.running = true
+	}
+
+	function showBusyAndDisconnectModel() { // this is used by QMLManager when operating the filter
+		busy.running = true
+		diveList.diveListModel = null
+	}
+
+	function hideBusy() {
+		busy.running = false
+	}
+
+	function hideBusyAndConnectModel() { // this is used by QMLManager when done filtering
+		busy.running = false
+		diveList.diveListModel = diveModel
+	}
 
 	function returnTopPage() {
-		for (var i=stackView.depth; i>1; i--) {
-			stackView.pop()
+		for (var i=pageStack.depth; i>1; i--) {
+			pageStack.pop()
 		}
 		detailsWindow.endEditMode()
 	}
@@ -67,12 +95,23 @@ Kirigami.ApplicationWindow {
 		diveList.scrollToTop()
 	}
 
-	function showMap(location) {
-		var urlPrefix = "https://www.google.com/maps/place/"
-		var locationPair = location + "/@" + location
-		var urlSuffix = ",5000m/data=!3m1!1e3!4m2!3m1!1s0x0:0x0"
-		Qt.openUrlExternally(urlPrefix + locationPair + urlSuffix)
+	function showMap() {
+		if (globalDrawer.drawerOpen)
+			globalDrawer.close()
+		var i=pageIndex(mapPage)
+		if (i === -1)
+			pageStack.push(mapPage)
+		else
+			pageStack.currentIndex = i
 
+	}
+
+	function pageIndex(pageToFind) {
+		for (var i = 0; i < pageStack.contentItem.contentChildren.length; i++) {
+			if (pageStack.contentItem.contentChildren[i] === pageToFind)
+				return i
+		}
+		return -1
 	}
 
 	function startAddDive() {
@@ -82,41 +121,122 @@ Kirigami.ApplicationWindow {
 		detailsWindow.date = manager.getDate(detailsWindow.dive_id)
 		detailsWindow.airtemp = ""
 		detailsWindow.watertemp = ""
-		detailsWindow.buddyModel = manager.buddyInit
+		detailsWindow.buddyModel = manager.buddyList
 		detailsWindow.buddyIndex = -1
+		detailsWindow.buddyText = ""
 		detailsWindow.depth = ""
-		detailsWindow.divemasterModel = manager.divemasterInit
+		detailsWindow.divemasterModel = manager.divemasterList
 		detailsWindow.divemasterIndex = -1
+		detailsWindow.divemasterText = ""
 		detailsWindow.notes = ""
 		detailsWindow.location = ""
 		detailsWindow.gps = ""
 		detailsWindow.duration = ""
-		detailsWindow.suitModel = manager.suitInit
+		detailsWindow.suitModel = manager.suitList
 		detailsWindow.suitIndex = -1
+		detailsWindow.suitText = ""
+		detailsWindow.cylinderModel0 = manager.cylinderInit
+		detailsWindow.cylinderModel1 = manager.cylinderInit
+		detailsWindow.cylinderModel2 = manager.cylinderInit
+		detailsWindow.cylinderModel3 = manager.cylinderInit
+		detailsWindow.cylinderModel4 = manager.cylinderInit
+		detailsWindow.cylinderIndex0 = PrefGeneral.default_cylinder == "" ? -1 : detailsWindow.cylinderModel0.indexOf(PrefGeneral.default_cylinder)
+		detailsWindow.usedCyl = ["",]
 		detailsWindow.weight = ""
-		detailsWindow.gasmix = ""
-		detailsWindow.startpressure = ""
-		detailsWindow.endpressure = ""
+		detailsWindow.usedGas = []
+		detailsWindow.startpressure = []
+		detailsWindow.endpressure = []
 		detailsWindow.gpsCheckbox = false
-		stackView.push(detailsWindow)
+		pageStack.push(detailsWindow)
 	}
 
 	globalDrawer: Kirigami.GlobalDrawer {
-		title: qsTr("Subsurface")
-		titleIcon: "qrc:/qml/subsurface-mobile-icon.png"
+		id: gDrawer
+		height: rootItem.height
+		topContent: Image {
+			source: "qrc:/qml/icons/dive.jpg"
+			Layout.fillWidth: true
+			sourceSize.width: parent.width
+			fillMode: Image.PreserveAspectFit
+			LinearGradient {
+				anchors {
+					left: parent.left
+					right: parent.right
+					top: parent.top
+				}
+				height: textblock.height * 2
+				start: Qt.point(0, 0)
+				end: Qt.point(0, height)
+				gradient: Gradient {
+					GradientStop {
+						position: 0.0
+						color: Qt.rgba(0, 0, 0, 0.8)
+					}
+					GradientStop {
+						position: 1.0
+						color: "transparent"
+					}
+				}
+			}
+			ColumnLayout {
+				id: textblock
+				anchors {
+					left: parent.left
+					top: parent.top
+				}
+				RowLayout {
+					width: Math.min(implicitWidth, parent.width)
+					Layout.margins: Kirigami.Units.smallSpacing
+					Image {
+						source: "qrc:/qml/subsurface-mobile-icon.png"
+						fillMode: Image.PreserveAspectCrop
+						sourceSize.width: Kirigami.Units.iconSizes.large
+						width: Kirigami.Units.iconSizes.large
+						Layout.margins: Kirigami.Units.smallSpacing
+					}
+					Kirigami.Heading {
+						Layout.fillWidth: true
+						visible: text.length > 0
+						level: 1
+						color: "white"
+						text: "Subsurface"
+						wrapMode: Text.NoWrap
+						elide: Text.ElideRight
+						font.weight: Font.Normal
+						Layout.margins: Kirigami.Units.smallSpacing
+					}
+				}
+				RowLayout {
+					Layout.margins: Kirigami.Units.smallSpacing
+					Kirigami.Heading {
+						Layout.fillWidth: true
+						visible: text.length > 0
+						level: 3
+						color: "white"
+						text: prefs.cloudUserName
+						wrapMode: Text.NoWrap
+						elide: Text.ElideRight
+						font.weight: Font.Normal
+					}
+				}
+			}
+		}
 
-		bannerImageSource: "dive.jpg"
+		resetMenuOnTriggered: false
 
-		property list<QtObject> topActions: [
+		actions: [
 			Kirigami.Action {
+				icon {
+					name: ":/icons/ic_home.svg"
+				}
 				text: qsTr("Dive list")
 				onTriggered: {
-					manager.appendTextToLog("requested dive list with credential status " + manager.credentialStatus)
-					if (manager.credentialStatus == QMLManager.UNKNOWN) {
+					manager.appendTextToLog("requested dive list with credential status " + prefs.credentialStatus)
+					if (prefs.credentialStatus == CloudStatus.CS_UNKNOWN) {
 						// the user has asked to change credentials - if the credentials before that
 						// were valid, go back to dive list
-						if (oldStatus == QMLManager.VALID || oldStatus == QMLManager.VALID_EMAIL) {
-							manager.credentialStatus = oldStatus
+						if (oldStatus == CloudStatus.CS_VERIFIED) {
+							prefs.credentialStatus = oldStatus
 						}
 					}
 					returnTopPage()
@@ -124,38 +244,85 @@ Kirigami.ApplicationWindow {
 				}
 			},
 			Kirigami.Action {
-				text: qsTr("Cloud credentials")
+				icon {
+					name: ":/icons/map-globe.svg"
+				}
+				text: mapPage.title
 				onTriggered: {
-					returnTopPage()
-					oldStatus = manager.credentialStatus
-					if (diveList.numDives > 0) {
-						manager.startPageText = "Enter different credentials or return to dive list"
-					} else {
-						manager.startPageText = "Enter valid cloud storage credentials"
-					}
-
-					manager.credentialStatus = QMLManager.UNKNOWN
+					showMap()
 				}
 			},
 			Kirigami.Action {
-				text: qsTr("Manage dives")
+				icon {
+					name: ":/icons/ic_sync.svg"
+				}
+				text: qsTr("Dive management")
 				Kirigami.Action {
+					icon {
+						name: ":/go-previous-symbolic"
+					}
+					text: qsTr("Back")
+					onTriggered: gDrawer.scrollViewItem.pop()
+				}
+				Kirigami.Action {
+					icon {
+						name: ":/icons/ic_add.svg"
+					}
 					text: qsTr("Add dive manually")
-					enabled: manager.credentialStatus === QMLManager.VALID || manager.credentialStatus === QMLManager.VALID_EMAIL || manager.credentialStatus === QMLManager.NOCLOUD
+					enabled: prefs.credentialStatus === CloudStatus.CS_VERIFIED ||
+							prefs.credentialStatus === CloudStatus.CS_NOCLOUD
 					onTriggered: {
+						globalDrawer.close()
 						returnTopPage()  // otherwise odd things happen with the page stack
 						startAddDive()
 					}
 				}
 				Kirigami.Action {
-					text: qsTr("Manual sync with cloud")
-					enabled: manager.credentialStatus === QMLManager.VALID || manager.credentialStatus === QMLManager.VALID_EMAIL || manager.credentialStatus === QMLManager.NOCLOUD
+					// this of course assumes a white background - theming means this needs to change again
+					icon {
+						name: ":/icons/downloadDC-black.svg"
+					}
+					text: qsTr("Download from DC")
+					enabled: true
 					onTriggered: {
-						if (manager.credentialStatus === QMLManager.NOCLOUD) {
+						globalDrawer.close()
+						downloadFromDc.dcImportModel.clearTable()
+						pageStack.push(downloadFromDc)
+					}
+				}
+				Kirigami.Action {
+					icon {
+						name: ":/icons/ic_add_location.svg"
+					}
+					text: qsTr("Apply GPS fixes")
+					onTriggered: {
+						globalDrawer.close()
+						showBusy()
+						diveList.diveListModel = null
+						manager.applyGpsData()
+						diveModel.resetInternalData()
+						manager.refreshDiveList()
+						while (pageStack.depth > 1) {
+							pageStack.pop()
+						}
+						diveList.diveListModel = diveModel
+						pageStack.push(diveList)
+						hideBusy()
+					}
+				}
+				Kirigami.Action {
+					icon {
+						name: ":/icons/cloud_sync.svg"
+					}
+					text: qsTr("Manual sync with cloud")
+					enabled: prefs.credentialStatus === CloudStatus.CS_VERIFIED ||
+							prefs.credentialStatus === CloudStatus.CS_NOCLOUD
+					onTriggered: {
+						if (prefs.credentialStatus === CloudStatus.CS_NOCLOUD) {
 							returnTopPage()
-							oldStatus = manager.credentialStatus
+							oldStatus = prefs.credentialStatus
 							manager.startPageText = "Enter valid cloud storage credentials"
-							manager.credentialStatus = QMLManager.UNKNOWN
+							prefs.credentialStatus = CloudStatus.CS_UNKNOWN
 							globalDrawer.close()
 						} else {
 							globalDrawer.close()
@@ -166,170 +333,338 @@ Kirigami.ApplicationWindow {
 					}
 				}
 				Kirigami.Action {
-				text: syncToCloud ? qsTr("Offline mode") : qsTr("Enable auto cloud sync")
-					enabled: manager.credentialStatus !== QMLManager.NOCLOUD
+				icon {
+					name: PrefCloudStorage.cloud_auto_sync ?  ":/icons/ic_cloud_off.svg" : ":/icons/ic_cloud_done.svg"
+				}
+				text: PrefCloudStorage.cloud_auto_sync ? qsTr("Disable auto cloud sync") : qsTr("Enable auto cloud sync")
+					visible: prefs.credentialStatus !== CloudStatus.CS_NOCLOUD
 					onTriggered: {
-						syncToCloud = !syncToCloud
-						if (!syncToCloud) {
-							var alertText = "Turning off automatic sync to cloud causes all data\n"
-							alertText +="to only be stored locally.\n"
-							alertText += "This can be very useful in situations with\n"
-							alertText += "limited or no network access.\n"
-							alertText += "Please chose 'Manual sync with cloud' if you have network\n"
-							alertText += "connectivity and want to sync your data to cloud storage."
-							showPassiveNotification(alertText, 10000)
+						PrefCloudStorage.cloud_auto_sync = !PrefCloudStorage.cloud_auto_sync
+						manager.setGitLocalOnly(PrefCloudStorage.cloud_auto_sync)
+						if (!PrefCloudStorage.cloud_auto_sync) {
+							showPassiveNotification(qsTr("Turning off automatic sync to cloud causes all data to only be \
+stored locally. This can be very useful in situations with limited or no network access. Please choose 'Manual sync with cloud' \
+if you have network connectivity and want to sync your data to cloud storage."), 10000)
 						}
 					}
 				}
-			}
-		] // end topActions
-
-		property list<QtObject> gpsActions: [
+			},
 			Kirigami.Action {
+				icon {
+					name: ":/icons/ic_place.svg"
+				}
 				text: qsTr("GPS")
-				enabled: manager.credentialStatus === QMLManager.VALID || manager.credentialStatus === QMLManager.VALID_EMAIL
-				Kirigami.Action {
-					text: qsTr("GPS-tag dives")
-					onTriggered: {
-						manager.applyGpsData();
-					}
-				}
+				visible: true
 
 				Kirigami.Action {
-					text: qsTr("Upload GPS data")
-					onTriggered: {
-						manager.sendGpsData();
+					icon {
+						name: ":/go-previous-symbolic"
 					}
+					text: qsTr("Back")
+					onTriggered: gDrawer.scrollViewItem.pop()
 				}
-
 				Kirigami.Action {
-					text: qsTr("Download GPS data")
-					onTriggered: {
-						manager.downloadGpsData();
+					icon {
+						name:":/icons/ic_gps_fixed.svg"
 					}
-				}
-
-				Kirigami.Action {
 					text: qsTr("Show GPS fixes")
 					onTriggered: {
+						globalDrawer.close()
 						returnTopPage()
 						manager.populateGpsData();
-						stackView.push(gpsWindow)
+						pageStack.push(gpsWindow)
 					}
 				}
 
 				Kirigami.Action {
+					icon {
+						name: ":/icons/ic_clear.svg"
+					}
 					text: qsTr("Clear GPS cache")
 					onTriggered: {
+						globalDrawer.close();
 						manager.clearGpsData();
 					}
 				}
+
 				Kirigami.Action {
-					text: qsTr("Preferences")
+					icon {
+						name: locationServiceEnabled ?  ":/icons/ic_location_off.svg" : ":/icons/ic_place.svg"
+					}
+					text: locationServiceEnabled ? qsTr("Disable location service") : qsTr("Run location service")
 					onTriggered: {
-						stackView.push(prefsWindow)
-						detailsWindow.endEditMode()
+						globalDrawer.close();
+						locationServiceEnabled = !locationServiceEnabled
 					}
 				}
-			}
-		] // end gpsActions
-
-		property list<QtObject> bottomActions: [
+			},
 			Kirigami.Action {
+				icon {
+					name: ":/icons/ic_info_outline.svg"
+				}
+				text: qsTr("About")
+				onTriggered: {
+					globalDrawer.close()
+					pageStack.push(aboutWindow)
+					detailsWindow.endEditMode()
+				}
+			},
+			Kirigami.Action {
+				icon {
+					name: ":/icons/ic_settings.svg"
+				}
+				text: qsTr("Settings")
+				onTriggered: {
+					globalDrawer.close()
+					settingsWindow.defaultCylinderModel = manager.cylinderInit
+					PrefGeneral.default_cylinder === "" ? defaultCylinderIndex = "-1" : defaultCylinderIndex = settingsWindow.defaultCylinderModel.indexOf(PrefGeneral.default_cylinder)
+					pageStack.push(settingsWindow)
+					detailsWindow.endEditMode()
+				}
+			},
+			Kirigami.Action {
+				icon {
+					name: ":/icons/ic_adb.svg"
+				}
 				text: qsTr("Developer")
+				visible: PrefDisplay.show_developer
+				Kirigami.Action {
+					icon {
+						name: ":/go-previous-symbolic"
+					}
+					text: qsTr("Back")
+					onTriggered: gDrawer.scrollViewItem.pop()
+				}
 				Kirigami.Action {
 					text: qsTr("App log")
 					onTriggered: {
-						stackView.push(logWindow)
+						globalDrawer.close()
+						pageStack.push(logWindow)
 					}
 				}
 
 				Kirigami.Action {
 					text: qsTr("Theme information")
 					onTriggered: {
-						stackView.push(themetest)
+						globalDrawer.close()
+						pageStack.push(themetest)
 					}
 				}
 			},
 			Kirigami.Action {
-				text: qsTr("User manual")
+				icon {
+					name: ":/icons/ic_help_outline.svg"
+				}
+				text: qsTr("Help")
 				onTriggered: {
-					Qt.openUrlExternally("https://subsurface-divelog.org/documentation/subsurface-mobile-user-manual/")
-				}
-			},
-			Kirigami.Action {
-				text: qsTr("About")
-				onTriggered: {
-					stackView.push(aboutWindow)
-					detailsWindow.endEditMode()
+					Qt.openUrlExternally("https://subsurface-divelog.org/documentation/subsurface-mobile-v2-user-manual/")
 				}
 			}
-		] // end bottonActions
-
-		Component.onCompleted: {
-			var createActions = new Array(0)
-			for (var i = 0; i < topActions.length; i++)
-				createActions.push(topActions[i])
-			if (Qt.platform.os !== "ios") {
-				for (var i = 0; i < gpsActions.length; i++)
-					createActions.push(gpsActions[i])
-			}
-			for (var i = 0; i < bottomActions.length; i++)
-				createActions.push(bottomActions[i])
-			actions = createActions
-			print(actions)
-		}
-
-		MouseArea {
-			height: childrenRect.height
-			width: Kirigami.Units.gridUnit * 10
-			CheckBox {
-				//text: qsTr("Run location service")
-				id: locationCheckbox
-				visible: manager.locationServiceAvailable
-				anchors {
-					left: parent.left
-					top: parent.top
-				}
-				checked: manager.locationServiceEnabled
-				onCheckedChanged: {
-					manager.locationServiceEnabled = checked;
-				}
-			}
-			Kirigami.Label {
-				x: Kirigami.Units.gridUnit * 1.5
-				anchors {
-					left: locationCheckbox.right
-					//leftMargin: units.smallSpacing
-					verticalCenter: locationCheckbox.verticalCenter
-				}
-				text: Qt.platform.os == "ios" ? "" : manager.locationServiceAvailable ? qsTr("Run location service") : qsTr("No GPS source available")
-			}
-			onClicked: {
-				print("Click.")
-				locationCheckbox.checked = !locationCheckbox.checked
-			}
+		] // end actions
+		Image {
+			fillMode: Image.PreserveAspectFit
+			source: "qrc:///icons/" + (subsurfaceTheme.currentTheme != "" ? subsurfaceTheme.currentTheme : "Blue") + "_gps.svg"
+			visible: locationServiceEnabled
 		}
 	}
 
-	contextDrawer: Kirigami.ContextDrawer {
-		id: contextDrawer
-		actions: rootItem.pageStack.currentPage ? rootItem.pageStack.currentPage.contextualActions : null
-		title: qsTr("Actions")
+	function blueTheme() {
+		Material.theme = Material.Light
+		Material.accent = subsurfaceTheme.bluePrimaryColor
+		subsurfaceTheme.currentTheme = "Blue"
+		subsurfaceTheme.darkerPrimaryColor = subsurfaceTheme.blueDarkerPrimaryColor
+		subsurfaceTheme.darkerPrimaryTextColor= subsurfaceTheme.blueDarkerPrimaryTextColor
+		subsurfaceTheme.primaryColor = subsurfaceTheme.bluePrimaryColor
+		subsurfaceTheme.primaryTextColor = subsurfaceTheme.bluePrimaryTextColor
+		subsurfaceTheme.lightPrimaryColor = subsurfaceTheme.blueLightPrimaryColor
+		subsurfaceTheme.lightPrimaryTextColor = subsurfaceTheme.blueLightPrimaryTextColor
+		subsurfaceTheme.backgroundColor = subsurfaceTheme.blueBackgroundColor
+		subsurfaceTheme.textColor = subsurfaceTheme.blueTextColor
+		subsurfaceTheme.secondaryTextColor = subsurfaceTheme.blueSecondaryTextColor
+		manager.setStatusbarColor(subsurfaceTheme.darkerPrimaryColor)
+		subsurfaceTheme.drawerColor = subsurfaceTheme.lightDrawerColor
+		subsurfaceTheme.iconStyle = "-dark"
+	}
+
+	function pinkTheme() {
+		Material.theme = Material.Light
+		Material.accent = subsurfaceTheme.pinkPrimaryColor
+		subsurfaceTheme.currentTheme = "Pink"
+		subsurfaceTheme.darkerPrimaryColor = subsurfaceTheme.pinkDarkerPrimaryColor
+		subsurfaceTheme.darkerPrimaryTextColor = subsurfaceTheme.pinkDarkerPrimaryTextColor
+		subsurfaceTheme.primaryColor = subsurfaceTheme.pinkPrimaryColor
+		subsurfaceTheme.primaryTextColor = subsurfaceTheme.pinkPrimaryTextColor
+		subsurfaceTheme.lightPrimaryColor = subsurfaceTheme.pinkLightPrimaryColor
+		subsurfaceTheme.lightPrimaryTextColor = subsurfaceTheme.pinkLightPrimaryTextColor
+		subsurfaceTheme.backgroundColor = subsurfaceTheme.pinkBackgroundColor
+		subsurfaceTheme.textColor = subsurfaceTheme.pinkTextColor
+		subsurfaceTheme.secondaryTextColor = subsurfaceTheme.pinkSecondaryTextColor
+		manager.setStatusbarColor(subsurfaceTheme.darkerPrimaryColor)
+		subsurfaceTheme.drawerColor = subsurfaceTheme.lightDrawerColor
+		subsurfaceTheme.iconStyle = ""
+	}
+
+	function darkTheme() {
+		Material.theme = Material.Dark
+		Material.accent = subsurfaceTheme.darkPrimaryColor
+		subsurfaceTheme.currentTheme = "Dark"
+		subsurfaceTheme.darkerPrimaryColor = subsurfaceTheme.darkDarkerPrimaryColor
+		subsurfaceTheme.darkerPrimaryTextColor= subsurfaceTheme.darkDarkerPrimaryTextColor
+		subsurfaceTheme.primaryColor = subsurfaceTheme.darkPrimaryColor
+		subsurfaceTheme.primaryTextColor = subsurfaceTheme.darkPrimaryTextColor
+		subsurfaceTheme.lightPrimaryColor = subsurfaceTheme.darkLightPrimaryColor
+		subsurfaceTheme.lightPrimaryTextColor = subsurfaceTheme.darkLightPrimaryTextColor
+		subsurfaceTheme.backgroundColor = subsurfaceTheme.darkBackgroundColor
+		subsurfaceTheme.textColor = subsurfaceTheme.darkTextColor
+		subsurfaceTheme.secondaryTextColor = subsurfaceTheme.darkSecondaryTextColor
+		manager.setStatusbarColor(subsurfaceTheme.darkerPrimaryColor)
+		subsurfaceTheme.drawerColor = subsurfaceTheme.darkDrawerColor
+		subsurfaceTheme.iconStyle = "-dark"
+	}
+
+	function setupUnits() {
+		// some screens are too narrow for Subsurface-mobile to render well
+		// try to hack around that by making sure that we can fit at least 21 gridUnits in a row
+		var numColumns = Math.floor(rootItem.width/pageStack.defaultColumnWidth)
+		rootItem.colWidth = numColumns > 1 ? Math.floor(rootItem.width / numColumns) : rootItem.width;
+		var kirigamiGridUnit = Kirigami.Units.gridUnit
+		var widthInGridUnits = Math.floor(rootItem.colWidth / kirigamiGridUnit)
+		if (widthInGridUnits < 21) {
+			kirigamiGridUnit = Math.floor(rootItem.colWidth / 21)
+			widthInGridUnits = Math.floor(rootItem.colWidth / kirigamiGridUnit)
+		}
+		var factor = 1.0
+		console.log(numColumns + " columns with column width of " + rootItem.colWidth)
+		console.log("width in Grid Units " + widthInGridUnits + " original gridUnit " + Kirigami.Units.gridUnit + " now " + kirigamiGridUnit)
+		if (Kirigami.Units.gridUnit !== kirigamiGridUnit) {
+			factor = kirigamiGridUnit / Kirigami.Units.gridUnit
+			// change our glabal grid unit
+			Kirigami.Units.gridUnit = kirigamiGridUnit
+		}
+		// break binding explicitly. Now we have a basePointSize that we can
+		// use to easily scale against
+		subsurfaceTheme.basePointSize = subsurfaceTheme.basePointSize * factor;
+
+		// set the initial UI scaling as in the the preferences
+		fontMetrics.font.pointSize = subsurfaceTheme.basePointSize * PrefDisplay.mobile_scale;
+		console.log("Done setting up sizes")
 	}
 
 	QtObject {
 		id: subsurfaceTheme
-		property int titlePointSize: Math.round(fontMetrics.font.pointSize * 1.5)
-		property int smallPointSize: Math.round(fontMetrics.font.pointSize * 0.8)
-		property color accentColor: "#2d5b9a"
-		property color shadedColor: "#132744"
-		property color accentTextColor: "#ececec"
-		property color diveListTextColor: "#000000" // the Kirigami theme text color is too light
-		property int columnWidth: Math.round(rootItem.width/(Kirigami.Units.gridUnit*28)) > 0 ? Math.round(rootItem.width / Math.round(rootItem.width/(Kirigami.Units.gridUnit*28))) : rootItem.width
+
+		// basePointSize is determinded based on the width of the screen (typically at start of the app)
+		// and must not be changed if we change font size. This is tricky in QML. In order to break the
+		// binding between basePointSize and fontMetrics.font.pointSize we explicitly multipy it by 1.0
+		// in the onComplete handler of this object.
+		property double basePointSize: fontMetrics.font.pointSize;
+
+		property double regularPointSize: fontMetrics.font.pointSize
+		property double titlePointSize: regularPointSize * 1.5
+		property double headingPointSize: regularPointSize * 1.2
+		property double smallPointSize: regularPointSize * 0.8
+
+		// icon Theme
+		property string iconStyle: ""
+
+		// colors currently in use
+		property string currentTheme
+		property color darkerPrimaryColor
+		property color darkerPrimaryTextColor
+		property color primaryColor
+		property color primaryTextColor
+		property color lightPrimaryColor
+		property color lightPrimaryTextColor
+		property color backgroundColor
+		property color textColor
+		property color secondaryTextColor
+		property color drawerColor
+
+		// colors for the blue theme
+		property color blueDarkerPrimaryColor: "#303F9f"
+		property color blueDarkerPrimaryTextColor: "#ECECEC"
+		property color bluePrimaryColor: "#3F51B5"
+		property color bluePrimaryTextColor: "#FFFFFF"
+		property color blueLightPrimaryColor: "#C5CAE9"
+		property color blueLightPrimaryTextColor: "#212121"
+		property color blueBackgroundColor: "#eff0f1"
+		property color blueTextColor: blueLightPrimaryTextColor
+		property color blueSecondaryTextColor: "#757575"
+
+		// colors for the pink theme
+		property color pinkDarkerPrimaryColor: "#C2185B"
+		property color pinkDarkerPrimaryTextColor: "#ECECEC"
+		property color pinkPrimaryColor: "#FF69B4"
+		property color pinkPrimaryTextColor: "#212121"
+		property color pinkLightPrimaryColor: "#FFDDF4"
+		property color pinkLightPrimaryTextColor: "#212121"
+		property color pinkBackgroundColor: "#eff0f1"
+		property color pinkTextColor: pinkLightPrimaryTextColor
+		property color pinkSecondaryTextColor: "#757575"
+
+		// colors for the dark theme
+		property color darkDarkerPrimaryColor: "#303F9f"
+		property color darkDarkerPrimaryTextColor: "#ECECEC"
+		property color darkPrimaryColor: "#3F51B5"
+		property color darkPrimaryTextColor: "#ECECEC"
+		property color darkLightPrimaryColor: "#C5CAE9"
+		property color darkLightPrimaryTextColor: "#ECECEC"
+		property color darkBackgroundColor: "#303030"
+		property color darkTextColor: darkPrimaryTextColor
+		property color darkSecondaryTextColor: "#757575"
+
+		property color contrastAccentColor: "#FF5722" // used for delete button
+		property color lightDrawerColor: "#FFFFFF"
+		property color darkDrawerColor: "#424242"
+		property int initialWidth: rootItem.width
+		property int initialHeight: rootItem.height
+		Component.onCompleted: {
+			// break the binding
+			initialWidth = initialWidth * 1
+			console.log("SubsufaceTheme constructor completed, initial width " + initialWidth)
+			if (rootItem.firstChange) // only run the setup if we haven't seen a change, yet
+				setupUnits() // but don't count this as a change (after all, it's not)
+			else
+				console.log("Already adjusted size, ignoring this")
+
+			// this needs to pick the theme from persistent preference settings
+			var theme = PrefDisplay.theme
+			if (theme == "Blue")
+				blueTheme()
+			else if (theme == "Pink")
+				pinkTheme()
+			else
+				darkTheme()
+		}
 	}
 
-	property Item stackView: pageStack
+	onWidthChanged: {
+		console.log("Window width changed to " + width + " orientation " + Screen.primaryOrientation)
+		if (subsurfaceTheme.initialWidth !== undefined) {
+			if (width !== subsurfaceTheme.initialWidth && rootItem.firstChange) {
+				rootItem.firstChange = false
+				rootItem.lastOrientation = Screen.primaryOrientation
+				subsurfaceTheme.initialWidth = width
+				subsurfaceTheme.initialHeight = height
+				console.log("first real change, so recalculating units and recording size as " + width + " x " + height)
+				setupUnits()
+			} else if (rootItem.lastOrientation !== undefined && rootItem.lastOrientation != Screen.primaryOrientation) {
+				console.log("Screen rotated, no action necessary")
+				rootItem.lastOrientation = Screen.primaryOrientation
+				setupUnits()
+			} else {
+				console.log("size change without rotation to " + width + " x " + height)
+				if (width > subsurfaceTheme.initialWidth) {
+					console.log("resetting to initial width " + subsurfaceTheme.initialWidth + " and height " + subsurfaceTheme.initialHeight)
+					rootItem.width = subsurfaceTheme.initialWidth
+					rootItem.height = subsurfaceTheme.initialHeight
+				}
+			}
+		} else {
+			console.log("width changed before initial width initialized, ignoring")
+		}
+	}
+
 	pageStack.initialPage: DiveList {
 		id: diveList
 		opacity: 0
@@ -339,15 +674,79 @@ Kirigami.ApplicationWindow {
 				easing.type: Easing.OutQuad
 			}
 		}
+	}
 
+	property int hackToOpenMap: 0 /* Otherpage */
+	/* I really want an enum, but those are painful in QML, so let's use numbers
+	 * 0 (Otherpage)   - the last page selected was a non-map page
+	 * 1 (MapSelected) - the map page was selected by the user
+	 * 2 (MapForced)   - the map page was forced by out hack
+	 */
+
+	pageStack.onCurrentItemChanged: {
+		// This is called whenever the user navigates using the breadcrumbs in the header
+
+		if (pageStack.currentItem === null) {
+			console.log("there's no current page")
+		} else {
+			// horrible, insane hack to make picking the mapPage work
+			// for some reason I cannot figure out, whenever the mapPage is selected
+			// we immediately switch back to the page before it - so force-prevent
+			// that undersired behavior
+			if (pageStack.currentItem.objectName === mapPage.objectName) {
+				// remember that we actively picked the mapPage
+				if (hackToOpenMap !== 2 /* MapForced */ ) {
+					console.log("changed to map, hack on")
+					hackToOpenMap = 1 /* MapSelected */
+				} else {
+					console.log("forced back to map, ignore")
+				}
+			} else if (pageStack.currentItem.objectName !== mapPage.objectName &&
+					pageStack.lastItem.objectName === mapPage.objectName &&
+					hackToOpenMap === 1 /* MapSelected */) {
+				// if we just picked the mapPage and are suddenly back on a different page
+				// force things back to the mapPage
+				console.log("hack was on, map is last page, switching back to map, hack off")
+				pageStack.currentIndex = pageStack.contentItem.contentChildren.length - 1
+				hackToOpenMap = 2 /* MapForced */
+			} else {
+				// if we picked a different page reset the mapPage hack
+				console.log("switched to " + pageStack.currentItem.objectName + " - hack off")
+				hackToOpenMap = 0 /* Otherpage */
+			}
+
+			// disable the left swipe to go back when on the map page
+			pageStack.interactive = pageStack.currentItem.objectName !== mapPage.objectName
+
+			// is there a better way to reload the map markers instead of doing that
+			// every time the map page is shown - e.g. link to the dive list model somehow?
+			if (pageStack.currentItem.objectName === mapPage.objectName)
+				mapPage.reloadMap()
+
+			// In case we land on any page, not being the DiveDetails (which can be
+			// in multiple states, such as add, edit or view), just end the edit/add mode
+			if (pageStack.currentItem.objectName !== "DiveDetails" &&
+					(detailsWindow.state === 'edit' || detailsWindow.state === 'add')) {
+				detailsWindow.endEditMode()
+			}
+		}
+	}
+
+	QMLPrefs {
+		id: prefs
 	}
 
 	QMLManager {
 		id: manager
 	}
 
-	Preferences {
-		id: prefsWindow
+	Settings {
+		id: settingsWindow
+		visible: false
+	}
+
+	CopySettings {
+		id: settingsCopyWindow
 		visible: false
 	}
 
@@ -358,12 +757,6 @@ Kirigami.ApplicationWindow {
 
 	DiveDetails {
 		id: detailsWindow
-		visible: false
-		anchors.fill: parent
-	}
-
-	DownloadFromDiveComputer {
-		id: downloadDivesWindow
 		visible: false
 	}
 
@@ -377,18 +770,47 @@ Kirigami.ApplicationWindow {
 		visible: false
 	}
 
+	DownloadFromDiveComputer {
+		id: downloadFromDc
+		visible: false
+	}
+
+	MapPage {
+		id: mapPage
+		visible: false
+	}
+
 	ThemeTest {
 		id: themetest
 		visible: false
 	}
 
+	onPluggedInDeviceNameChanged: {
+		if (detailsWindow.state === 'edit' || detailsWindow.state === 'add') {
+			/* we're in the middle of editing / adding a dive */
+			console.log("Download page requested by Android Intent, but adding/editing dive; no action taken")
+		} else {
+			console.log("Show download page for device " + pluggedInDeviceName)
+			/* if we recognized the device, we'll pass in a triple of ComboBox indeces as "vendor;product;connection" */
+			var vendorProductConnection = pluggedInDeviceName.split(';')
+			if (vendorProductConnection.length === 3)
+				diveList.showDownloadPage(vendorProductConnection[0], vendorProductConnection[1], vendorProductConnection[2])
+			else
+				diveList.showDownloadPage()
+			console.log("done showing download page")
+		}
+	}
+
 	Component.onCompleted: {
-		Kirigami.Theme.highlightColor = subsurfaceTheme.accentColor
-		manager.finishSetup();
+		// try to see if we can detect certain device vendors through these properties
+		if (Screen.manufacturer + " " + Screen.model + " " + Screen.name !== "  ")
+			console.log("Running on " + Screen.manufacturer + " " + Screen.model + " " + Screen.name)
 		rootItem.visible = true
 		diveList.opacity = 1
 		rootItem.opacity = 1
-		pageStack.defaultColumnWidth = Kirigami.Units.gridUnit * 28
+		console.log("setting the defaultColumnWidth to " + Kirigami.Units.gridUnit * 21)
+		pageStack.defaultColumnWidth = Kirigami.Units.gridUnit * 21
+		manager.appInitialized()
 	}
 	/* TODO: Verify where opacity went to.
 	Behavior on opacity {

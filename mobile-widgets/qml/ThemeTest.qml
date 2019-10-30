@@ -1,12 +1,15 @@
-import QtQuick 2.5
-import QtQuick.Controls 1.4
-import QtQuick.Layouts 1.1
+// SPDX-License-Identifier: GPL-2.0
+import QtQuick 2.6
+import QtQuick.Layouts 1.2
+import QtQuick.Controls 2.2 as Controls
 import QtQuick.Window 2.2
-import org.kde.kirigami 2.0 as Kirigami
+import org.kde.kirigami 2.4 as Kirigami
+import org.subsurfacedivelog.mobile 1.0
 
 Kirigami.Page {
 
 	title: "Theme Information"
+	background: Rectangle { color: subsurfaceTheme.backgroundColor }
 
 	GridLayout {
 		id: themetest
@@ -23,35 +26,32 @@ Kirigami.Page {
 			Layout.columnSpan: 2
 			level: 3
 		}
-		FontMetrics {
-			id: fm
-		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Geometry (pixels):"
 		}
-		Kirigami.Label {
+		Controls.Label {
 			text: rootItem.width + "x" + rootItem.height
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Geometry (gridUnits):"
 		}
-		Kirigami.Label {
+		Controls.Label {
 			text: Math.round(rootItem.width / Kirigami.Units.gridUnit) + "x" + Math.round(rootItem.height / Kirigami.Units.gridUnit)
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Units.gridUnit:"
 		}
-		Kirigami.Label {
+		Controls.Label {
 			text: Kirigami.Units.gridUnit
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Units.devicePixelRatio:"
 		}
-		Kirigami.Label {
+		Controls.Label {
 			text: Screen.devicePixelRatio
 		}
 
@@ -61,56 +61,72 @@ Kirigami.Page {
 			Layout.columnSpan: 2
 		}
 
-		Kirigami.Label {
+		Controls.Label {
+			text: "basePointSize:"
+		}
+		Controls.Label {
+			text: subsurfaceTheme.basePointSize
+		}
+
+		Controls.Label {
 			text: "FontMetrics pointSize:"
 		}
-		Kirigami.Label {
-			text: fm.font.pointSize
+		Controls.Label {
+			text: fontMetrics.font.pointSize
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "FontMetrics pixelSize:"
 		}
-		Kirigami.Label {
-			text: Number(fm.height).toFixed(2)
+		Controls.Label {
+			text: Number(fontMetrics.height).toFixed(2)
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "FontMetrics devicePixelRatio:"
 		}
-		Kirigami.Label {
-			text: Number(fm.height / fm.font.pointSize).toFixed(2)
+		Controls.Label {
+			text: Number(fontMetrics.height / fontMetrics.font.pointSize).toFixed(2)
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Text item pixelSize:"
 		}
 		Text {
-			text: font.pixelSize
+			text: fontMetrics.font.pixelSize
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Text item pointSize:"
 		}
 		Text {
-			text: font.pointSize
+			text: fontMetrics.font.pointSize
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Pixel density:"
 		}
 		Text {
 			text: Number(Screen.pixelDensity).toFixed(2)
 		}
 
-		Kirigami.Label {
+		Controls.Label {
 			text: "Height of default font:"
 		}
 		Text {
-			text: Number(font.pixelSize / Screen.pixelDensity).toFixed(2) + "mm"
+			text: Number(fontMetrics.font.pixelSize / Screen.pixelDensity).toFixed(2) + "mm"
 		}
 
-		Kirigami.Label {
+		Controls.Label {
+			text: "2cm x 2cm square:"
+		}
+		Rectangle {
+			width: Math.round(Screen.pixelDensity * 20)
+			height: Math.round(Screen.pixelDensity * 20)
+			color: "black"
+		}
+
+		Controls.Label {
 			Layout.columnSpan: 2
 			Layout.fillHeight: true
 		}

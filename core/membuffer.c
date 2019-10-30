@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
+#ifdef __clang__
 // Clang has a bug on zero-initialization of C structs.
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -9,13 +12,20 @@
 #include "dive.h"
 #include "membuffer.h"
 
-char *detach_buffer(struct membuffer *b)
+/* Only for internal use */
+static char *detach_buffer(struct membuffer *b)
 {
 	char *result = b->buffer;
 	b->buffer = NULL;
 	b->len = 0;
 	b->alloc = 0;
 	return result;
+}
+
+char *detach_cstring(struct membuffer *b)
+{
+	mb_cstring(b);
+	return detach_buffer(b);
 }
 
 void free_buffer(struct membuffer *b)
@@ -49,7 +59,7 @@ static void oom(void)
 	exit(1);
 }
 
-static void make_room(struct membuffer *b, unsigned int size)
+void make_room(struct membuffer *b, unsigned int size)
 {
 	unsigned int needed = b->len + size;
 	if (needed > b->alloc) {
@@ -114,8 +124,7 @@ char *vformat_string(const char *fmt, va_list args)
 {
 	struct membuffer mb = { 0 };
 	put_vformat(&mb, fmt, args);
-	mb_cstring(&mb);
-	return detach_buffer(&mb);
+	return detach_cstring(&mb);
 }
 
 char *format_string(const char *fmt, ...)
@@ -135,6 +144,15 @@ void put_format(struct membuffer *b, const char *fmt, ...)
 
 	va_start(args, fmt);
 	put_vformat(b, fmt, args);
+	va_end(args);
+}
+
+void put_format_loc(struct membuffer *b, const char *fmt, ...)
+{
+	va_list args;
+
+	va_start(args, fmt);
+	put_vformat_loc(b, fmt, args);
 	va_end(args);
 }
 
@@ -206,11 +224,19 @@ void put_degrees(struct membuffer *b, degrees_t value, const char *pre, const ch
 	put_format(b, "%s%s%u.%06u%s", pre, sign, FRACTION(udeg, 1000000), post);
 }
 
+void put_location(struct membuffer *b, const location_t *loc, const char *pre, const char *post)
+{
+	if (has_location(loc)) {
+		put_degrees(b, loc->lat, pre, " ");
+		put_degrees(b, loc->lon, "", post);
+	}
+}
+
 void put_quoted(struct membuffer *b, const char *text, int is_attribute, int is_html)
 {
 	const char *p = text;
 
-	for (;;) {
+	for (;text;) {
 		const char *escape;
 
 		switch (*p++) {
@@ -258,7 +284,7 @@ void put_quoted(struct membuffer *b, const char *text, int is_attribute, int is_
 	}
 }
 
-char *add_to_string_va(const char *old, const char *fmt, va_list args)
+char *add_to_string_va(char *old, const char *fmt, va_list args)
 {
 	char *res;
 	struct membuffer o = { 0 }, n = { 0 };
@@ -276,7 +302,7 @@ char *add_to_string_va(const char *old, const char *fmt, va_list args)
  * WARNING - this will free(old), the intended pattern is
  * string = add_to_string(string, fmt, ...)
  */
-char *add_to_string(const char *old, const char *fmt, ...)
+char *add_to_string(char *old, const char *fmt, ...)
 {
 	char *res;
 	va_list args;

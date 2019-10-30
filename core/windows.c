@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 /* windows.c */
 /* implements Windows specific functions */
+#include "ssrf.h"
 #include <io.h>
 #include "dive.h"
 #include "display.h"
+#include "file.h"
+#include "errorhelper.h"
 #undef _WIN32_WINNT
 #define _WIN32_WINNT 0x500
 #include <windows.h>
@@ -39,11 +43,64 @@ bool subsurface_ignore_font(const char *font)
 	return false;
 }
 
+/* this function converts a win32's utf-16 2 byte string to utf-8.
+ * the caller function should manage the allocated memory.
+ */
+static char *utf16_to_utf8_fl(const wchar_t *utf16, char *file, int line)
+{
+	assert(utf16 != NULL);
+	assert(file != NULL);
+	assert(line);
+	/* estimate buffer size */
+	const int sz = WideCharToMultiByte(CP_UTF8, 0, utf16, -1, NULL, 0, NULL, NULL);
+	if (!sz) {
+		fprintf(stderr, "%s:%d: cannot estimate buffer size\n", file, line);
+		return NULL;
+	}
+	char *utf8 = (char *)malloc(sz);
+	if (!utf8) {
+		fprintf(stderr, "%s:%d: cannot allocate buffer of size: %d\n", file, line, sz);
+		return NULL;
+	}
+	if (WideCharToMultiByte(CP_UTF8, 0, utf16, -1, utf8, sz, NULL, NULL)) {
+		return utf8;
+	}
+	fprintf(stderr, "%s:%d: cannot convert string\n", file, line);
+	free((void *)utf8);
+	return NULL;
+}
+
+#define utf16_to_utf8(s) utf16_to_utf8_fl(s, __FILE__, __LINE__)
+
+/* this function converts a utf-8 string to win32's utf-16 2 byte string.
+ * the caller function should manage the allocated memory.
+ */
+static wchar_t *utf8_to_utf16_fl(const char *utf8, char *file, int line)
+{
+	assert(utf8 != NULL);
+	assert(file != NULL);
+	assert(line);
+	/* estimate buffer size */
+	const int sz = strlen(utf8) + 1;
+	wchar_t *utf16 = (wchar_t *)malloc(sizeof(wchar_t) * sz);
+	if (!utf16) {
+		fprintf(stderr, "%s:%d: cannot allocate buffer of size: %d\n", file, line, sz);
+		return NULL;
+	}
+	if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, utf16, sz))
+		return utf16;
+	fprintf(stderr, "%s:%d: cannot convert string\n", file, line);
+	free((void *)utf16);
+	return NULL;
+}
+
+#define utf8_to_utf16(s) utf8_to_utf16_fl(s, __FILE__, __LINE__)
+
 /* this function returns the Win32 Roaming path for the current user as UTF-8.
  * it never returns NULL but fallsback to .\ instead!
  * the append argument will append a wchar_t string to the end of the path.
  */
-static const char *system_default_path_append(const wchar_t *append)
+static wchar_t *system_default_path_append(const wchar_t *append)
 {
 	wchar_t wpath[MAX_PATH] = { 0 };
 	const char *fname = "system_default_path_append()";
@@ -64,27 +121,10 @@ static const char *system_default_path_append(const wchar_t *append)
 		wcscat(wpath, append);
 	}
 
-	/* attempt to convert the UTF-16 string to UTF-8.
-	 * resize the buffer and fallback to .\Subsurface if it fails.
-	 */
-	const int wsz = wcslen(wpath);
-	const int sz = WideCharToMultiByte(CP_UTF8, 0, wpath, wsz, NULL, 0, NULL, NULL);
-	char *path = (char *)malloc(sz + 1);
-	if (!sz)
-		goto fallback;
-	if (WideCharToMultiByte(CP_UTF8, 0, wpath, wsz, path, sz, NULL, NULL)) {
-		path[sz] = '\0';
-		return path;
-	}
-
-fallback:
-	fprintf(stderr, "%s: cannot obtain path as UTF-8!\n", fname);
-	const char *local = ".\\Subsurface";
-	const int len = strlen(local) + 1;
-	path = (char *)realloc(path, len);
-	memset(path, 0, len);
-	strcat(path, local);
-	return path;
+	wchar_t *result = wcsdup(wpath);
+	if (!result)
+		fprintf(stderr, "%s: cannot allocate memory for path!\n", fname);
+	return result;
 }
 
 /* by passing NULL to system_default_path_append() we obtain the pure path.
@@ -93,8 +133,11 @@ fallback:
 const char *system_default_directory(void)
 {
 	static const char *path = NULL;
-	if (!path)
-		path = system_default_path_append(NULL);
+	if (!path) {
+		wchar_t *wpath = system_default_path_append(NULL);
+		path = utf16_to_utf8(wpath);
+		free((void *)wpath);
+	}
 	return path;
 }
 
@@ -102,25 +145,26 @@ const char *system_default_directory(void)
  */
 const char *system_default_filename(void)
 {
-	static wchar_t filename[UNLEN + 5] = { 0 };
-	if (!*filename) {
+	static const char *path = NULL;
+	if (!path) {
 		wchar_t username[UNLEN + 1] = { 0 };
 		DWORD username_len = UNLEN + 1;
 		GetUserNameW(username, &username_len);
+		wchar_t filename[UNLEN + 5] = { 0 };
 		wcscat(filename, username);
 		wcscat(filename, L".xml");
+		wchar_t *wpath = system_default_path_append(filename);
+		path = utf16_to_utf8(wpath);
+		free((void *)wpath);
 	}
-	static const char *path = NULL;
-	if (!path)
-		path = system_default_path_append(filename);
 	return path;
 }
 
-int enumerate_devices(device_callback_t callback, void *userdata, int dc_type)
+int enumerate_devices(device_callback_t callback, void *userdata, unsigned int transport)
 {
 	int index = -1;
 	DWORD i;
-	if (dc_type != DC_TYPE_UEMIS) {
+	if (transport & DC_TRANSPORT_SERIAL) {
 		// Open the registry key.
 		HKEY hKey;
 		LONG rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\DEVICEMAP\\SERIALCOMM", 0, KEY_QUERY_VALUE, &hKey);
@@ -168,11 +212,11 @@ int enumerate_devices(device_callback_t callback, void *userdata, int dc_type)
 
 		RegCloseKey(hKey);
 	}
-	if (dc_type != DC_TYPE_SERIAL) {
+	if (transport & DC_TRANSPORT_USBSTORAGE) {
 		int i;
 		int count_drives = 0;
 		const int bufdef = 512;
-		const char *dlabels[] = {"UEMISSDA", NULL};
+		const char *dlabels[] = {"UEMISSDA", "GARMIN", NULL};
 		char bufname[bufdef], bufval[bufdef], *p;
 		DWORD bufname_len;
 
@@ -203,30 +247,6 @@ int enumerate_devices(device_callback_t callback, void *userdata, int dc_type)
 	}
 	return index;
 }
-
-/* this function converts a utf-8 string to win32's utf-16 2 byte string.
- * the caller function should manage the allocated memory.
- */
-static wchar_t *utf8_to_utf16_fl(const char *utf8, char *file, int line)
-{
-	assert(utf8 != NULL);
-	assert(file != NULL);
-	assert(line);
-	/* estimate buffer size */
-	const int sz = strlen(utf8) + 1;
-	wchar_t *utf16 = (wchar_t *)malloc(sizeof(wchar_t) * sz);
-	if (!utf16) {
-		fprintf(stderr, "%s:%d: %s %d.", file, line, "cannot allocate buffer of size", sz);
-		return NULL;
-	}
-	if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, utf16, sz))
-		return utf16;
-	fprintf(stderr, "%s:%d: %s", file, line, "cannot convert string.");
-	free((void *)utf16);
-	return NULL;
-}
-
-#define utf8_to_utf16(s) utf8_to_utf16_fl(s, __FILE__, __LINE__)
 
 /* bellow we provide a set of wrappers for some I/O functions to use wchar_t.
  * on win32 this solves the issue that we need paths to be utf-16 encoded.
@@ -346,6 +366,18 @@ int subsurface_access(const char *path, int mode)
 	return ret;
 }
 
+int subsurface_stat(const char* path, struct stat* buf)
+{
+	int ret = -1;
+	if (!path)
+		return ret;
+	wchar_t *wpath = utf8_to_utf16(path);
+	if (wpath)
+		ret = wstat(wpath, buf);
+	free((void *)wpath);
+	return ret;
+}
+
 #ifndef O_BINARY
 #define O_BINARY 0
 #endif
@@ -377,78 +409,59 @@ static struct {
 	FILE *out, *err;
 } console_desc;
 
-void subsurface_console_init(bool dedicated)
+void subsurface_console_init(void)
 {
-	(void)console_desc;
+	UNUSED(console_desc);
 	/* if this is a console app already, do nothing */
 #ifndef WIN32_CONSOLE_APP
+
 	/* just in case of multiple calls */
 	memset((void *)&console_desc, 0, sizeof(console_desc));
-	/* the AttachConsole(..) call can be used to determine if the parent process
-	 * is a terminal. if it succeeds, there is no need for a dedicated console
-	 * window and we don't need to call the AllocConsole() function. on the other
-	 * hand if the user has set the 'dedicated' flag to 'true' and if AttachConsole()
-	 * has failed, we create a dedicated console window.
+
+	/* if AttachConsole(ATTACH_PARENT_PROCESS) returns true the parent process
+	 * is a terminal. based on the result, either redirect to that terminal or
+	 * to log files.
 	 */
 	console_desc.allocated = AttachConsole(ATTACH_PARENT_PROCESS);
-	if (console_desc.allocated)
-		dedicated = false;
-	if (!console_desc.allocated && dedicated)
-		console_desc.allocated = AllocConsole();
-	if (!console_desc.allocated)
-		return;
-
-	console_desc.cp = GetConsoleCP();
-	SetConsoleOutputCP(CP_UTF8); /* make the ouput utf8 */
-
-	/* set some console modes; we don't need to reset these back.
-	 * ENABLE_EXTENDED_FLAGS = 0x0080, ENABLE_QUICK_EDIT_MODE = 0x0040 */
-	HANDLE h_in = GetStdHandle(STD_INPUT_HANDLE);
-	if (h_in) {
-		SetConsoleMode(h_in, 0x0080 | 0x0040);
-		CloseHandle(h_in);
-	}
-
-	/* dedicated only; disable the 'x' button as it will close the main process as well */
-	HWND h_cw = GetConsoleWindow();
-	if (h_cw && dedicated) {
-		SetWindowTextA(h_cw, "Subsurface Console");
-		HMENU h_menu = GetSystemMenu(h_cw, 0);
-		if (h_menu) {
-			EnableMenuItem(h_menu, SC_CLOSE, MF_BYCOMMAND | MF_DISABLED);
-			DrawMenuBar(h_cw);
+	if (console_desc.allocated) {
+		console_desc.cp = GetConsoleCP();
+		SetConsoleOutputCP(CP_UTF8); /* make the ouput utf8 */
+		console_desc.out = freopen("CON", "w", stdout);
+		console_desc.err = freopen("CON", "w", stderr);
+	} else {
+		verbose = 1; /* set the verbose level to '1' */
+		wchar_t *wpath_out = system_default_path_append(L"subsurface_out.log");
+		wchar_t *wpath_err = system_default_path_append(L"subsurface_err.log");
+		if (wpath_out && wpath_err) {
+			console_desc.out = _wfreopen(wpath_out, L"w", stdout);
+			console_desc.err = _wfreopen(wpath_err, L"w", stderr);
 		}
-		SetConsoleCtrlHandler(NULL, TRUE); /* disable the CTRL handler */
+		free((void *)wpath_out);
+		free((void *)wpath_err);
 	}
 
-	/* redirect; on win32, CON is a reserved pipe target, like NUL */
-	console_desc.out = freopen("CON", "w", stdout);
-	console_desc.err = freopen("CON", "w", stderr);
-	if (!dedicated)
-		puts(""); /* add an empty line */
+	puts(""); /* add an empty line */
 #endif
 }
 
 void subsurface_console_exit(void)
 {
 #ifndef WIN32_CONSOLE_APP
-	if (!console_desc.allocated)
-		return;
-
 	/* close handles */
 	if (console_desc.out)
 		fclose(console_desc.out);
 	if (console_desc.err)
 		fclose(console_desc.err);
-
 	/* reset code page and free */
-	SetConsoleOutputCP(console_desc.cp);
-	FreeConsole();
+	if (console_desc.allocated) {
+		SetConsoleOutputCP(console_desc.cp);
+		FreeConsole();
+	}
 #endif
 }
 
 bool subsurface_user_is_root()
 {
 	/* FIXME: Detect admin rights */
-	return (false);
+	return false;
 }

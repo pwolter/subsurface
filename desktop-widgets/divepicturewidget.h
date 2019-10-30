@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVEPICTUREWIDGET_H
 #define DIVEPICTUREWIDGET_H
 
@@ -11,13 +12,13 @@ class DivePictureWidget : public QListView {
 public:
 	DivePictureWidget(QWidget *parent);
 protected:
-	void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
+	void mouseDoubleClickEvent(QMouseEvent *event) override;
+	void mousePressEvent(QMouseEvent *event) override;
+	void wheelEvent(QWheelEvent *event) override;
 
 signals:
 	void photoDoubleClicked(const QString filePath);
-private
-slots:
-	void doubleClicked(const QModelIndex &index);
+	void zoomLevelChanged(int delta);
 };
 
 class DivePictureThumbnailThread : public QThread {

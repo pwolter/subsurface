@@ -1,13 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef TESTGITSTORAGE_H
 #define TESTGITSTORAGE_H
 
 #include <QTest>
 
-class TestGitStorage : public QObject
-{
+class TestGitStorage : public QObject {
 	Q_OBJECT
 private slots:
-	void testSetup();
+	void initTestCase();
+	void cleanup();
+
+	void testGitStorageLocal_data();
 	void testGitStorageLocal();
 	void testGitStorageCloud();
 	void testGitStorageCloudOfflineSync();

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef BTDEVICESELECTIONDIALOG_H
 #define BTDEVICESELECTIONDIALOG_H
 
@@ -5,50 +6,11 @@
 #include <QListWidgetItem>
 #include <QPointer>
 #include <QtBluetooth/QBluetoothLocalDevice>
-#include <QtBluetooth/qbluetoothglobal.h>
 #include <QtBluetooth/QBluetoothDeviceDiscoveryAgent>
-
-#if defined(Q_OS_WIN)
-	#include <QThread>
-	#include <winsock2.h>
-	#include <ws2bth.h>
-
-	#define SUCCESS				0
-	#define BTH_ADDR_BUF_LEN                40
-	#define BTH_ADDR_PRETTY_STRING_LEN	17	// there are 6 two-digit hex values and 5 colons
-
-	#undef ERROR				// this is already declared in our headers
-	#undef IGNORE				// this is already declared in our headers
-	#undef DC_VERSION			// this is already declared in libdivecomputer header
-#endif
 
 namespace Ui {
 	class BtDeviceSelectionDialog;
 }
-
-#if defined(Q_OS_WIN)
-class WinBluetoothDeviceDiscoveryAgent : public QThread {
-	Q_OBJECT
-signals:
-	void deviceDiscovered(const QBluetoothDeviceInfo &info);
-	void error(QBluetoothDeviceDiscoveryAgent::Error error);
-
-public:
-	WinBluetoothDeviceDiscoveryAgent(QObject *parent);
-	~WinBluetoothDeviceDiscoveryAgent();
-	bool isActive() const;
-	QString errorToString() const;
-	QBluetoothDeviceDiscoveryAgent::Error error() const;
-	virtual void run();
-	virtual void stop();
-
-private:
-	bool running;
-	bool stopped;
-	QString lastErrorToString;
-	QBluetoothDeviceDiscoveryAgent::Error lastError;
-};
-#endif
 
 class BtDeviceSelectionDialog : public QDialog {
 	Q_OBJECT
@@ -58,6 +20,8 @@ public:
 	~BtDeviceSelectionDialog();
 	QString getSelectedDeviceAddress();
 	QString getSelectedDeviceName();
+	QString getSelectedDeviceText();
+	static QString formatDeviceText(const QString &address, const QString &name);
 
 private slots:
 	void on_changeDeviceState_clicked();
@@ -67,7 +31,7 @@ private slots:
 	void remoteDeviceScanFinished();
 	void hostModeStateChanged(QBluetoothLocalDevice::HostMode mode);
 	void addRemoteDevice(const QBluetoothDeviceInfo &remoteDeviceInfo);
-	void itemClicked(QListWidgetItem *item);
+	void currentItemChanged(QListWidgetItem *item,QListWidgetItem *previous);
 	void displayPairingMenu(const QPoint &pos);
 	void pairingFinished(const QBluetoothAddress &address,QBluetoothLocalDevice::Pairing pairing);
 	void error(QBluetoothLocalDevice::Error error);
@@ -76,13 +40,9 @@ private slots:
 
 private:
 	Ui::BtDeviceSelectionDialog *ui;
-#if defined(Q_OS_WIN)
-	WinBluetoothDeviceDiscoveryAgent *remoteDeviceDiscoveryAgent;
-#else
 	QBluetoothLocalDevice *localDevice;
 	QBluetoothDeviceDiscoveryAgent *remoteDeviceDiscoveryAgent;
-#endif
-	QSharedPointer<QBluetoothDeviceInfo> selectedRemoteDeviceInfo;
+	QScopedPointer<QBluetoothDeviceInfo> selectedRemoteDeviceInfo;
 
 	void updateLocalDeviceInformation();
 	void initializeDeviceDiscoveryAgent();

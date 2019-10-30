@@ -6,11 +6,14 @@ set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM 1)
 set(TRANSLATION_FILES
 	subsurface_source.ts
 	subsurface_bg_BG.ts
+	subsurface_ca.ts
 	subsurface_cs.ts
 	subsurface_da_DK.ts
 	subsurface_de_CH.ts
 	subsurface_de_DE.ts
+	subsurface_el_GR.ts
 	subsurface_en_GB.ts
+	subsurface_en_US.ts
 	subsurface_es_ES.ts
 	subsurface_et_EE.ts
 	subsurface_fi_FI.ts
@@ -31,8 +34,7 @@ set(TRANSLATION_FILES
 	subsurface_zh_TW.ts
 )
 
-# disabled translations as they are below 50%:
-#	subsurface_el_GR.ts
+# disabled translations as they are below 40%:
 #	subsurface_hu.ts
 
 qt5_add_translation(TRANSLATIONS ${TRANSLATION_FILES})
@@ -40,6 +42,9 @@ set(TRANSLATIONS ${TRANSLATIONS} PARENT_SCOPE)
 add_custom_target (translations ALL DEPENDS ${TRANSLATIONS})
 
 # enable the following two lines to recreate the .ts files
-
+#
+#
+#  DO NOT DO THIS MANUALLY -- USE THE SCRIPT IN ORDER TO FIX NUMERUSFORM
+#  =====================================================================
 # qt5_create_translation(TRANSLATION_MESSAGES ${CMAKE_SOURCE_DIR} ${TRANSLATION_FILES})
 # add_custom_target(translations_update DEPENDS ${TRANSLATION_MESSAGES})

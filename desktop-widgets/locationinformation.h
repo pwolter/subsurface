@@ -1,63 +1,66 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef LOCATIONINFORMATION_H
 #define LOCATIONINFORMATION_H
 
-#include "ui_locationInformation.h"
+#include "core/units.h"
+#include "core/divesite.h"
+#include "ui_locationinformation.h"
+#include "modeldelegates.h"
+#include "qt-models/divelocationmodel.h"
 #include <stdint.h>
 #include <QAbstractListModel>
 #include <QSortFilterProxyModel>
 
 class LocationInformationWidget : public QGroupBox {
-Q_OBJECT
+	Q_OBJECT
 public:
 	LocationInformationWidget(QWidget *parent = 0);
-	virtual bool eventFilter(QObject*, QEvent*);
+	bool eventFilter(QObject*, QEvent*) override;
+	void initFields(dive_site *ds);
 
 protected:
-	void showEvent(QShowEvent *);
+	void enableLocationButtons(bool enable);
 
 public slots:
 	void acceptChanges();
-	void rejectChanges();
-	void updateGpsCoordinates();
-	void markChangedWidget(QWidget *w);
-	void enableEdition();
-	void resetState();
-	void resetPallete();
-	void on_diveSiteCoordinates_textChanged(const QString& text);
-	void on_diveSiteDescription_textChanged(const QString& text);
-	void on_diveSiteName_textChanged(const QString& text);
-	void on_diveSiteNotes_textChanged();
+	void on_diveSiteCountry_editingFinished();
+	void on_diveSiteCoordinates_editingFinished();
+	void on_diveSiteDescription_editingFinished();
+	void on_diveSiteName_editingFinished();
+	void on_diveSiteNotes_editingFinished();
+	void on_diveSiteDistance_textChanged(const QString &s);
 	void reverseGeocode();
 	void mergeSelectedDiveSites();
 private slots:
 	void updateLabels();
-signals:
-	void startEditDiveSite(uint32_t uuid);
-	void endEditDiveSite();
-	void coordinatesChanged();
-	void startFilterDiveSite(uint32_t uuid);
-	void stopFilterDiveSite();
-	void requestCoordinates();
-	void endRequestCoordinates();
-
+	void diveSiteChanged(struct dive_site *ds, int field);
+	void diveSiteDeleted(struct dive_site *ds, int);
+	void unitsChanged();
 private:
+	void keyPressEvent(QKeyEvent *e) override;
+	void clearLabels();
 	Ui::LocationInformation ui;
-	bool modified;
-	QAction *acceptAction, *rejectAction;
+	GPSLocationInformationModel filter_model;
+	dive_site *diveSite;
+	int64_t closeDistance; // Distance of "close" dive sites in mm
 };
 
 class DiveLocationFilterProxyModel : public QSortFilterProxyModel {
 	Q_OBJECT
+	QString filter;
 public:
 	DiveLocationFilterProxyModel(QObject *parent = 0);
-	virtual bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const;
-	virtual bool lessThan(const QModelIndex& source_left, const QModelIndex& source_right) const;
+	bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const override;
+	bool lessThan(const QModelIndex& source_left, const QModelIndex& source_right) const override;
+	void setFilter(const QString &filter);
+	void setCurrentLocation(location_t loc);
+private:
+	location_t currentLocation; // Sort by distance to that location
 };
 
 class DiveLocationModel : public QAbstractTableModel {
 	Q_OBJECT
 public:
-	enum columns{UUID, NAME, LATITUDE, LONGITUDE, DESCRIPTION, NOTES, COLUMNS};
 	DiveLocationModel(QObject *o = 0);
 	void resetModel();
 	QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const;
@@ -73,7 +76,7 @@ class DiveLocationListView : public QListView {
 public:
 	DiveLocationListView(QWidget *parent = 0);
 protected:
-	virtual void currentChanged(const QModelIndex& current, const QModelIndex& previous);
+	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
 signals:
 	void currentIndexChanged(const QModelIndex& current);
 };
@@ -81,19 +84,18 @@ signals:
 class DiveLocationLineEdit : public QLineEdit {
 	Q_OBJECT
 public:
-	enum DiveSiteType { NO_DIVE_SITE, NEW_DIVE_SITE, EXISTING_DIVE_SITE };
 	DiveLocationLineEdit(QWidget *parent =0 );
 	void refreshDiveSiteCache();
 	void setTemporaryDiveSiteName(const QString& s);
 	bool eventFilter(QObject*, QEvent*);
 	void itemActivated(const QModelIndex& index);
-	DiveSiteType currDiveSiteType() const;
-	uint32_t currDiveSiteUuid() const;
+	struct dive_site *currDiveSite() const;
 	void fixPopupPosition();
-	void setCurrentDiveSiteUuid(uint32_t uuid);
+	void setCurrentDiveSite(struct dive *d);
+	void showAllSites();
 
 signals:
-	void diveSiteSelected(uint32_t uuid);
+	void diveSiteSelected();
 	void entered(const QModelIndex& index);
 	void currentChanged(const QModelIndex& index);
 
@@ -107,8 +109,8 @@ private:
 	DiveLocationFilterProxyModel *proxy;
 	DiveLocationModel *model;
 	DiveLocationListView *view;
-	DiveSiteType currType;
-	uint32_t currUuid;
+	LocationFilterDelegate delegate;
+	struct dive_site *currDs;
 };
 
 #endif

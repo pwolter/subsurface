@@ -1,59 +1,69 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVELIST_H
 #define DIVELIST_H
+
+#include "dive.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+struct deco_state;
+
 /* this is used for both git and xml format */
 #define DATAFORMAT_VERSION 3
 
-struct dive;
-
 extern void update_cylinder_related_info(struct dive *);
-extern void mark_divelist_changed(int);
+extern void mark_divelist_changed(bool);
 extern int unsaved_changes(void);
-extern void remove_autogen_trips(void);
-extern unsigned int init_decompression(struct dive *dive);
+extern int init_decompression(struct deco_state *ds, struct dive *dive);
 
 /* divelist core logic functions */
-extern void process_dives(bool imported, bool prefer_imported);
-extern char *get_dive_gas_string(struct dive *dive);
+extern void process_loaded_dives();
+/* flags for process_imported_dives() */
+#define IMPORT_PREFER_IMPORTED (1 << 0)
+#define	IMPORT_IS_DOWNLOADED (1 << 1)
+#define	IMPORT_MERGE_ALL_TRIPS (1 << 2)
+#define	IMPORT_ADD_TO_NEW_TRIP (1 << 3)
+extern void add_imported_dives(struct dive_table *import_table, struct trip_table *import_trip_table, struct dive_site_table *import_sites_table,
+			       int flags);
+extern void process_imported_dives(struct dive_table *import_table, struct trip_table *import_trip_table, struct dive_site_table *import_sites_table,
+				   int flags,
+				   struct dive_table *dives_to_add, struct dive_table *dives_to_remove,
+				   struct trip_table *trips_to_add, struct dive_site_table *sites_to_add);
+extern char *get_dive_gas_string(const struct dive *dive);
 
-extern dive_trip_t *find_trip_by_idx(int idx);
-
-struct dive **grow_dive_table(struct dive_table *table);
-extern int trip_has_selected_dives(dive_trip_t *trip);
-extern void get_dive_gas(struct dive *dive, int *o2_p, int *he_p, int *o2low_p);
-extern int get_divenr(struct dive *dive);
-extern int get_divesite_idx(struct dive_site *ds);
-extern dive_trip_t *find_matching_trip(timestamp_t when);
-extern void remove_dive_from_trip(struct dive *dive, short was_autogen);
-extern dive_trip_t *create_and_hookup_trip_from_dive(struct dive *dive);
-extern void autogroup_dives(void);
-extern struct dive *merge_two_dives(struct dive *a, struct dive *b);
+extern int dive_table_get_insertion_index(struct dive_table *table, struct dive *dive);
+extern void add_to_dive_table(struct dive_table *table, int idx, struct dive *dive);
+extern void append_dive(struct dive *dive);
+extern void insert_dive(struct dive_table *table, struct dive *d);
+extern void get_dive_gas(const struct dive *dive, int *o2_p, int *he_p, int *o2low_p);
+extern int get_divenr(const struct dive *dive);
+extern int remove_dive(const struct dive *dive, struct dive_table *table);
 extern bool consecutive_selected();
-extern void select_dive(int idx);
-extern void deselect_dive(int idx);
-extern void select_dives_in_trip(struct dive_trip *trip);
-extern void deselect_dives_in_trip(struct dive_trip *trip);
+extern void select_dive(struct dive *dive);
+extern void deselect_dive(struct dive *dive);
 extern void filter_dive(struct dive *d, bool shown);
-extern void combine_trips(struct dive_trip *trip_a, struct dive_trip *trip_b);
-extern void find_new_trip_start_time(dive_trip_t *trip);
 extern struct dive *first_selected_dive();
 extern struct dive *last_selected_dive();
-extern bool is_trip_before_after(struct dive *dive, bool before);
+extern int get_dive_nr_at_idx(int idx);
 extern void set_dive_nr_for_current_dive();
+extern timestamp_t get_surface_interval(timestamp_t when);
+extern void delete_dive_from_table(struct dive_table *table, int idx);
+extern struct dive *find_next_visible_dive(timestamp_t when);
+
+extern int comp_dives(const struct dive *a, const struct dive *b);
 
 int get_min_datafile_version();
 void reset_min_datafile_version();
 void report_datafile_version(int version);
 int get_dive_id_closest_to(timestamp_t when);
 void clear_dive_file_data();
+void clear_dive_table(struct dive_table *table);
+void move_dive_table(struct dive_table *src, struct dive_table *dst);
 
 #ifdef DEBUG_TRIP
 extern void dump_selection(void);
-extern void dump_trip_list(void);
 #endif
 
 #ifdef __cplusplus

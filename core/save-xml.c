@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
+#ifdef __clang__
 // Clang has a bug on zero-initialization of C structs.
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 #include <stdio.h>
 #include <ctype.h>
@@ -10,13 +13,18 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "dive.h"
-#include "divelist.h"
+#include "divesite.h"
+#include "errorhelper.h"
+#include "subsurface-string.h"
+#include "trip.h"
 #include "device.h"
+#include "file.h"
 #include "membuffer.h"
 #include "strndup.h"
 #include "git-access.h"
-#include "qthelperfromc.h"
+#include "qthelper.h"
+#include "gettext.h"
+#include "tag.h"
 
 /*
  * We're outputting utf8 in xml.
@@ -57,6 +65,35 @@ static void show_utf8(struct membuffer *b, const char *text, const char *pre, co
 	quote(b, cleaned, is_attribute);
 	put_string(b, post);
 	free(cleaned);
+}
+
+static void blankout(char *c)
+{
+	while(*c) {
+		switch (*c) {
+		case 'A'...'Z':
+			*c = 'X';
+			break;
+		case 'a'...'z':
+			*c = 'x';
+			break;
+		default:
+			;
+		}
+		++c;
+	}
+}
+
+static void show_utf8_blanked(struct membuffer *b, const char *text, const char *pre, const char *post, int is_attribute, bool anonymize)
+{
+	if (!text)
+		return;
+	char *copy = strdup(text);
+
+	if (anonymize)
+		blankout(copy);
+	show_utf8(b, copy, pre, post, is_attribute);
+	free(copy);
 }
 
 static void save_depths(struct membuffer *b, struct divecomputer *dc)
@@ -115,18 +152,18 @@ static void save_salinity(struct membuffer *b, struct divecomputer *dc)
 	put_string(b, " />\n");
 }
 
-static void save_overview(struct membuffer *b, struct dive *dive)
+static void save_overview(struct membuffer *b, struct dive *dive, bool anonymize)
 {
-	show_utf8(b, dive->divemaster, "  <divemaster>", "</divemaster>\n", 0);
-	show_utf8(b, dive->buddy, "  <buddy>", "</buddy>\n", 0);
-	show_utf8(b, dive->notes, "  <notes>", "</notes>\n", 0);
-	show_utf8(b, dive->suit, "  <suit>", "</suit>\n", 0);
+	show_utf8_blanked(b, dive->divemaster, "  <divemaster>", "</divemaster>\n", 0, anonymize);
+	show_utf8_blanked(b, dive->buddy, "  <buddy>", "</buddy>\n", 0, anonymize);
+	show_utf8_blanked(b, dive->notes, "  <notes>", "</notes>\n", 0, anonymize);
+	show_utf8_blanked(b, dive->suit, "  <suit>", "</suit>\n", 0, anonymize);
 }
 
-static void put_gasmix(struct membuffer *b, struct gasmix *mix)
+static void put_gasmix(struct membuffer *b, struct gasmix mix)
 {
-	int o2 = mix->o2.permille;
-	int he = mix->he.permille;
+	int o2 = mix.o2.permille;
+	int he = mix.he.permille;
 
 	if (o2) {
 		put_format(b, " o2='%u.%u%%'", FRACTION(o2, 10));
@@ -145,17 +182,20 @@ static void save_cylinder_info(struct membuffer *b, struct dive *dive)
 		cylinder_t *cylinder = dive->cylinder + i;
 		int volume = cylinder->type.size.mliter;
 		const char *description = cylinder->type.description;
+		int use = cylinder->cylinder_use;
 
 		put_format(b, "  <cylinder");
 		if (volume)
 			put_milli(b, " size='", volume, " l'");
 		put_pressure(b, cylinder->type.workingpressure, " workpressure='", " bar'");
 		show_utf8(b, description, " description='", "'", 1);
-		put_gasmix(b, &cylinder->gasmix);
+		put_gasmix(b, cylinder->gasmix);
 		put_pressure(b, cylinder->start, " start='", " bar'");
 		put_pressure(b, cylinder->end, " end='", " bar'");
-		if (cylinder->cylinder_use != OC_GAS)
-			show_utf8(b, cylinderuse_text[cylinder->cylinder_use], " use='", "'", 1);
+		if (use > OC_GAS && use < NUM_GAS_USE)
+			show_utf8(b, cylinderuse_text[use], " use='", "'", 1);
+		if (cylinder->depth.mm != 0)
+			put_milli(b, " depth='", cylinder->depth.mm, " m'");
 		put_format(b, " />\n");
 	}
 }
@@ -167,9 +207,9 @@ static void save_weightsystem_info(struct membuffer *b, struct dive *dive)
 	nr = nr_weightsystems(dive);
 
 	for (i = 0; i < nr; i++) {
-		weightsystem_t *ws = dive->weightsystem + i;
-		int grams = ws->weight.grams;
-		const char *description = ws->description;
+		weightsystem_t ws = dive->weightsystems.weightsystems[i];
+		int grams = ws.weight.grams;
+		const char *description = ws.description;
 
 		put_format(b, "  <weightsystem");
 		put_milli(b, " weight='", grams, " kg'");
@@ -189,24 +229,45 @@ static void show_index(struct membuffer *b, int value, const char *pre, const ch
 		show_integer(b, value, pre, post);
 }
 
-static void save_sample(struct membuffer *b, struct sample *sample, struct sample *old)
+static void save_sample(struct membuffer *b, struct sample *sample, struct sample *old, int o2sensor)
 {
+	int idx;
+
 	put_format(b, "  <sample time='%u:%02u min'", FRACTION(sample->time.seconds, 60));
 	put_milli(b, " depth='", sample->depth.mm, " m'");
 	if (sample->temperature.mkelvin && sample->temperature.mkelvin != old->temperature.mkelvin) {
 		put_temperature(b, sample->temperature, " temp='", " C'");
 		old->temperature = sample->temperature;
 	}
-	put_pressure(b, sample->cylinderpressure, " pressure='", " bar'");
-	put_pressure(b, sample->o2cylinderpressure, " o2pressure='", " bar'");
 
 	/*
 	 * We only show sensor information for samples with pressure, and only if it
 	 * changed from the previous sensor we showed.
 	 */
-	if (sample->cylinderpressure.mbar && sample->sensor != old->sensor) {
-		put_format(b, " sensor='%d'", sample->sensor);
-		old->sensor = sample->sensor;
+	for (idx = 0; idx < MAX_SENSORS; idx++) {
+		pressure_t p = sample->pressure[idx];
+		int sensor = sample->sensor[idx];
+
+		if (!p.mbar)
+			continue;
+
+		/* Legacy o2pressure format? */
+		if (o2sensor >= 0) {
+			if (sensor == o2sensor) {
+				put_pressure(b, p, " o2pressure='", " bar'");
+				continue;
+			}
+			put_pressure(b, p, " pressure='", " bar'");
+			if (sensor != old->sensor[0]) {
+				put_format(b, " sensor='%d'", sensor);
+				old->sensor[0] = sensor;
+			}
+			continue;
+		}
+
+		/* The new-style format is much simpler: the sensor is always encoded */
+		put_format(b, " pressure%d=", sensor);
+		put_pressure(b, p, "'", " bar'");
 	}
 
 	/* the deco/ndl values are stored whenever they change */
@@ -218,8 +279,10 @@ static void save_sample(struct membuffer *b, struct sample *sample, struct sampl
 		put_format(b, " tts='%u:%02u min'", FRACTION(sample->tts.seconds, 60));
 		old->tts = sample->tts;
 	}
-	if (sample->rbt.seconds)
+	if (sample->rbt.seconds != old->rbt.seconds) {
 		put_format(b, " rbt='%u:%02u min'", FRACTION(sample->rbt.seconds, 60));
+		old->rbt = sample->rbt;
+	}
 	if (sample->in_deco != old->in_deco) {
 		put_format(b, " in_deco='%d'", sample->in_deco ? 1 : 0);
 		old->in_deco = sample->in_deco;
@@ -258,8 +321,14 @@ static void save_sample(struct membuffer *b, struct sample *sample, struct sampl
 		put_milli(b, " po2='", sample->setpoint.mbar, " bar'");
 		old->setpoint = sample->setpoint;
 	}
-	show_index(b, sample->heartbeat, "heartbeat='", "'");
-	show_index(b, sample->bearing.degrees, "bearing='", "'");
+	if (sample->heartbeat != old->heartbeat) {
+		show_index(b, sample->heartbeat, "heartbeat='", "'");
+		old->heartbeat = sample->heartbeat;
+	}
+	if (sample->bearing.degrees != old->bearing.degrees) {
+		show_index(b, sample->bearing.degrees, "bearing='", "'");
+		old->bearing.degrees = sample->bearing.degrees;
+	}
 	put_format(b, " />\n");
 }
 
@@ -268,10 +337,13 @@ static void save_one_event(struct membuffer *b, struct dive *dive, struct event 
 	put_format(b, "  <event time='%d:%02d min'", FRACTION(ev->time.seconds, 60));
 	show_index(b, ev->type, "type='", "'");
 	show_index(b, ev->flags, "flags='", "'");
-	show_index(b, ev->value, "value='", "'");
+	if (!strcmp(ev->name,"modechange"))
+		show_utf8(b, divemode_text[ev->value], " divemode='", "'",1);
+	else
+		show_index(b, ev->value, "value='", "'");
 	show_utf8(b, ev->name, " name='", "'", 1);
 	if (event_is_gaschange(ev)) {
-		struct gasmix *mix = get_gasmix_from_event(dive, ev);
+		struct gasmix mix = get_gasmix_from_event(dive, ev);
 		if (ev->gas.index >= 0)
 			show_integer(b, ev->gas.index, "cylinder='", "'");
 		put_gasmix(b, mix);
@@ -324,16 +396,29 @@ static void show_date(struct membuffer *b, timestamp_t when)
 
 	put_format(b, " date='%04u-%02u-%02u'",
 		   tm.tm_year, tm.tm_mon + 1, tm.tm_mday);
-	put_format(b, " time='%02u:%02u:%02u'",
-		   tm.tm_hour, tm.tm_min, tm.tm_sec);
+	if (tm.tm_hour || tm.tm_min || tm.tm_sec)
+		put_format(b, " time='%02u:%02u:%02u'",
+			   tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
-static void save_samples(struct membuffer *b, int nr, struct sample *s)
+static void save_samples(struct membuffer *b, struct dive *dive, struct divecomputer *dc)
 {
-	struct sample dummy = {};
+	int nr;
+	int o2sensor;
+	struct sample *s;
+	struct sample dummy = { .bearing.degrees = -1, .ndl.seconds = -1 };
 
+	/* Set up default pressure sensor indexes */
+	o2sensor = legacy_format_o2pressures(dive, dc);
+	if (o2sensor >= 0) {
+		dummy.sensor[0] = !o2sensor;
+		dummy.sensor[1] = o2sensor;
+	}
+
+	s = dc->sample;
+	nr = dc->samples;
 	while (--nr >= 0) {
-		save_sample(b, s, &dummy);
+		save_sample(b, s, &dummy, o2sensor);
 		s++;
 	}
 }
@@ -342,6 +427,8 @@ static void save_dc(struct membuffer *b, struct dive *dive, struct divecomputer 
 {
 	put_format(b, "  <divecomputer");
 	show_utf8(b, dc->model, " model='", "'", 1);
+	if (dc->last_manual_time.seconds)
+		put_duration(b, dc->last_manual_time, " last-manual-time='", " min'");
 	if (dc->deviceid)
 		put_format(b, " deviceid='%08x'", dc->deviceid);
 	if (dc->diveid)
@@ -351,7 +438,7 @@ static void save_dc(struct membuffer *b, struct dive *dive, struct divecomputer 
 	if (dc->duration.seconds && dc->duration.seconds != dive->dc.duration.seconds)
 		put_duration(b, dc->duration, " duration='", " min'");
 	if (dc->divemode != OC) {
-		for (enum dive_comp_type i = 0; i < NUM_DC_TYPE; i++)
+		for (enum divemode_t i = 0; i < NUM_DIVEMODE; i++)
 			if (dc->divemode == i)
 				show_utf8(b, divemode_text[i], " dctype='", "'", 1);
 		if (dc->no_o2sensors)
@@ -365,7 +452,7 @@ static void save_dc(struct membuffer *b, struct dive *dive, struct divecomputer 
 	put_duration(b, dc->surfacetime, "  <surfacetime>", " min</surfacetime>\n");
 	save_extra_data(b, dc->extra_data);
 	save_events(b, dive, dc->events);
-	save_samples(b, dc->samples, dc->sample);
+	save_samples(b, dive, dc);
 
 	put_format(b, "  </divecomputer>\n");
 }
@@ -384,40 +471,38 @@ static void save_picture(struct membuffer *b, struct picture *pic)
 		}
 		put_format(b, " offset='%c%u:%02u min'", sign, FRACTION(offset, 60));
 	}
-	if (pic->latitude.udeg || pic->longitude.udeg) {
-		put_degrees(b, pic->latitude, " gps='", " ");
-		put_degrees(b, pic->longitude, "", "'");
-	}
-	if (hashstring(pic->filename))
-		put_format(b, " hash='%s'", hashstring(pic->filename));
+	put_location(b, &pic->location, " gps='","'");
 
 	put_string(b, "/>\n");
 }
 
-void save_one_dive_to_mb(struct membuffer *b, struct dive *dive)
+void save_one_dive_to_mb(struct membuffer *b, struct dive *dive, bool anonymize)
 {
 	struct divecomputer *dc;
+	pressure_t surface_pressure = un_fixup_surface_pressure(dive);
 
 	put_string(b, "<dive");
 	if (dive->number)
 		put_format(b, " number='%d'", dive->number);
-	if (dive->tripflag == NO_TRIP)
+	if (dive->notrip)
 		put_format(b, " tripflag='NOTRIP'");
 	if (dive->rating)
 		put_format(b, " rating='%d'", dive->rating);
 	if (dive->visibility)
 		put_format(b, " visibility='%d'", dive->visibility);
 	save_tags(b, dive->tag_list);
-	if (dive->dive_site_uuid) {
-		if (get_dive_site_by_uuid(dive->dive_site_uuid) != NULL)
-			put_format(b, " divesiteid='%8x'", dive->dive_site_uuid);
-		else if (verbose)
-			fprintf(stderr, "removed reference to non-existant dive site with uuid %08x\n", dive->dive_site_uuid);
+	if (dive->dive_site) {
+		put_format(b, " divesiteid='%8x'", dive->dive_site->uuid);
 	}
 	show_date(b, dive->when);
-	put_format(b, " duration='%u:%02u min'>\n",
-		   FRACTION(dive->dc.duration.seconds, 60));
-	save_overview(b, dive);
+	if (surface_pressure.mbar)
+		put_pressure(b, surface_pressure, " airpressure='", " bar'");
+	if (dive->dc.duration.seconds > 0)
+		put_format(b, " duration='%u:%02u min'>\n",
+			   FRACTION(dive->dc.duration.seconds, 60));
+	else
+		put_format(b, ">\n");
+	save_overview(b, dive, anonymize);
 	save_cylinder_info(b, dive);
 	save_weightsystem_info(b, dive);
 	save_dive_temperature(b, dive);
@@ -429,23 +514,23 @@ void save_one_dive_to_mb(struct membuffer *b, struct dive *dive)
 	put_format(b, "</dive>\n");
 }
 
-int save_dive(FILE *f, struct dive *dive)
+int save_dive(FILE *f, struct dive *dive, bool anonymize)
 {
 	struct membuffer buf = { 0 };
 
-	save_one_dive_to_mb(&buf, dive);
+	save_one_dive_to_mb(&buf, dive, anonymize);
 	flush_buffer(&buf, f);
 	/* Error handling? */
 	return 0;
 }
 
-static void save_trip(struct membuffer *b, dive_trip_t *trip)
+static void save_trip(struct membuffer *b, dive_trip_t *trip, bool anonymize)
 {
 	int i;
 	struct dive *dive;
 
 	put_format(b, "<trip");
-	show_date(b, trip->when);
+	show_date(b, trip_date(trip));
 	show_utf8(b, trip->location, " location=\'", "\'", 1);
 	put_format(b, ">\n");
 	show_utf8(b, trip->notes, "<notes>", "</notes>\n", 0);
@@ -458,7 +543,7 @@ static void save_trip(struct membuffer *b, dive_trip_t *trip)
 	 */
 	for_each_dive(i, dive) {
 		if (dive->divetrip == trip)
-			save_one_dive_to_mb(b, dive);
+			save_one_dive_to_mb(b, dive, anonymize);
 	}
 
 	put_format(b, "</trip>\n");
@@ -498,10 +583,10 @@ static void save_one_device(void *_f, const char *model, uint32_t deviceid,
 
 int save_dives(const char *filename)
 {
-	return save_dives_logic(filename, false);
+	return save_dives_logic(filename, false, false);
 }
 
-void save_dives_buffer(struct membuffer *b, const bool select_only)
+static void save_dives_buffer(struct membuffer *b, const bool select_only, bool anonymize)
 {
 	int i;
 	struct dive *dive;
@@ -509,71 +594,45 @@ void save_dives_buffer(struct membuffer *b, const bool select_only)
 
 	put_format(b, "<divelog program='subsurface' version='%d'>\n<settings>\n", DATAFORMAT_VERSION);
 
-	if (prefs.save_userid_local)
-		put_format(b, "  <userid>%30s</userid>\n", prefs.userid);
-
 	/* save the dive computer nicknames, if any */
 	call_for_each_dc(b, save_one_device, select_only);
 	if (autogroup)
 		put_format(b, "  <autogroup state='1' />\n");
 	put_format(b, "</settings>\n");
 
-	/* save the dive sites - to make the output consistent let's sort the table, first */
-	dive_site_table_sort();
+	/* save the dive sites */
 	put_format(b, "<divesites>\n");
 	for (i = 0; i < dive_site_table.nr; i++) {
-		int j;
-		struct dive *d;
-		struct dive_site *ds = get_dive_site(i);
-		if (dive_site_is_empty(ds)) {
-			for_each_dive(j, d) {
-				if (d->dive_site_uuid == ds->uuid)
-					d->dive_site_uuid = 0;
-			}
-			delete_dive_site(ds->uuid);
-			i--; // since we just deleted that one
+		struct dive_site *ds = get_dive_site(i, &dive_site_table);
+		/* Don't export empty dive sites */
+		if (dive_site_is_empty(ds))
 			continue;
-		} else if (ds->name &&
-			   (strncmp(ds->name, "Auto-created dive", 17) == 0 ||
-			    strncmp(ds->name, "New Dive", 8) == 0)) {
-			// these are the two default names for sites from
-			// the web service; if the site isn't used in any
-			// dive (really? you didn't rename it?), delete it
-			if (!is_dive_site_used(ds->uuid, false)) {
-				if (verbose)
-					fprintf(stderr, "Deleted unused auto-created dive site %s\n", ds->name);
-				delete_dive_site(ds->uuid);
-				i--; // since we just deleted that one
-				continue;
-			}
-		}
-		if (select_only && !is_dive_site_used(ds->uuid, true))
-				continue;
+		/* Only write used dive sites when exporting selected dives */
+		if (select_only && !is_dive_site_selected(ds))
+			continue;
 
 		put_format(b, "<site uuid='%8x'", ds->uuid);
-		show_utf8(b, ds->name, " name='", "'", 1);
-		if (ds->latitude.udeg || ds->longitude.udeg) {
-			put_degrees(b, ds->latitude, " gps='", " ");
-			put_degrees(b, ds->longitude, "", "'");
-		}
-		show_utf8(b, ds->description, " description='", "'", 1);
+		show_utf8_blanked(b, ds->name, " name='", "'", 1, anonymize);
+		put_location(b, &ds->location, " gps='", "'");
+		show_utf8_blanked(b, ds->description, " description='", "'", 1, anonymize);
 		put_format(b, ">\n");
-		show_utf8(b, ds->notes, "  <notes>", " </notes>\n", 0);
+		show_utf8_blanked(b, ds->notes, "  <notes>", " </notes>\n", 0, anonymize);
 		if (ds->taxonomy.nr) {
 			for (int j = 0; j < ds->taxonomy.nr; j++) {
 				struct taxonomy *t = &ds->taxonomy.category[j];
 				if (t->category != TC_NONE && t->value) {
 					put_format(b, "  <geo cat='%d'", t->category);
 					put_format(b, " origin='%d'", t->origin);
-					show_utf8(b, t->value, " value='", "'/>\n", 1);
+					show_utf8_blanked(b, t->value, " value='", "'", 1, anonymize);
+					put_format(b, "/>\n");
 				}
 			}
 		}
 		put_format(b, "</site>\n");
 	}
 	put_format(b, "</divesites>\n<dives>\n");
-	for (trip = dive_trip_list; trip != NULL; trip = trip->next)
-		trip->index = 0;
+	for (i = 0; i < trip_table.nr; ++i)
+		trip_table.trips[i]->saved = 0;
 
 	/* save the dives */
 	for_each_dive(i, dive) {
@@ -581,24 +640,24 @@ void save_dives_buffer(struct membuffer *b, const bool select_only)
 
 			if (!dive->selected)
 				continue;
-			save_one_dive_to_mb(b, dive);
+			save_one_dive_to_mb(b, dive, anonymize);
 
 		} else {
 			trip = dive->divetrip;
 
 			/* Bare dive without a trip? */
 			if (!trip) {
-				save_one_dive_to_mb(b, dive);
+				save_one_dive_to_mb(b, dive, anonymize);
 				continue;
 			}
 
 			/* Have we already seen this trip (and thus saved this dive?) */
-			if (trip->index)
+			if (trip->saved)
 				continue;
 
 			/* We haven't seen this trip before - save it and all dives */
-			trip->index = 1;
-			save_trip(b, trip);
+			trip->saved = 1;
+			save_trip(b, trip, anonymize);
 		}
 	}
 	put_format(b, "</dives>\n</divelog>\n");
@@ -661,19 +720,19 @@ static void try_to_backup(const char *filename)
 	}
 }
 
-int save_dives_logic(const char *filename, const bool select_only)
+int save_dives_logic(const char *filename, const bool select_only, bool anonymize)
 {
 	struct membuffer buf = { 0 };
 	FILE *f;
 	void *git;
 	const char *branch, *remote;
-	int error;
+	int error = 0;
 
 	git = is_git_repository(filename, &branch, &remote, false);
 	if (git)
 		return git_save_dives(git, branch, remote, select_only);
 
-	save_dives_buffer(&buf, select_only);
+	save_dives_buffer(&buf, select_only, anonymize);
 
 	if (same_string(filename, "-")) {
 		f = stdout;
@@ -687,13 +746,13 @@ int save_dives_logic(const char *filename, const bool select_only)
 		error = fclose(f);
 	}
 	if (error)
-		report_error("Save failed (%s)", strerror(errno));
+		report_error(translate("gettextFromC", "Failed to save dives to %s (%s)"), filename, strerror(errno));
 
 	free_buffer(&buf);
 	return error;
 }
 
-int export_dives_xslt(const char *filename, const bool selected, const int units, const char *export_xslt)
+int export_dives_xslt(const char *filename, const bool selected, const int units, const char *export_xslt, bool anonymize)
 {
 	FILE *f;
 	struct membuffer buf = { 0 };
@@ -712,7 +771,7 @@ int export_dives_xslt(const char *filename, const bool selected, const int units
 		return report_error("No filename for export");
 
 	/* Save XML to file and convert it into a memory buffer */
-	save_dives_buffer(&buf, selected);
+	save_dives_buffer(&buf, selected, anonymize);
 
 	/*
 	 * Parse the memory buffer into XML document and
@@ -750,4 +809,61 @@ int export_dives_xslt(const char *filename, const bool selected, const int units
 	xmlFreeDoc(transformed);
 
 	return res;
+}
+
+static void save_dive_sites_buffer(struct membuffer *b, const struct dive_site *sites[], int nr_sites, bool anonymize)
+{
+	int i;
+	put_format(b, "<divesites program='subsurface' version='%d'>\n", DATAFORMAT_VERSION);
+
+	/* save the dive sites */
+	for (i = 0; i < nr_sites; i++) {
+		const struct dive_site *ds = sites[i];
+
+		put_format(b, "<site uuid='%8x'", ds->uuid);
+		show_utf8_blanked(b, ds->name, " name='", "'", 1, anonymize);
+		put_location(b, &ds->location, " gps='", "'");
+		show_utf8_blanked(b, ds->description, " description='", "'", 1, anonymize);
+		put_format(b, ">\n");
+		show_utf8_blanked(b, ds->notes, "  <notes>", " </notes>\n", 0, anonymize);
+		if (ds->taxonomy.nr) {
+			for (int j = 0; j < ds->taxonomy.nr; j++) {
+				struct taxonomy *t = &ds->taxonomy.category[j];
+				if (t->category != TC_NONE && t->value) {
+					put_format(b, "  <geo cat='%d'", t->category);
+					put_format(b, " origin='%d'", t->origin);
+					show_utf8_blanked(b, t->value, " value='", "'", 1, anonymize);
+					put_format(b, "/>\n");
+				}
+			}
+		}
+		put_format(b, "</site>\n");
+	}
+	put_format(b, "</divesites>\n");
+}
+
+int save_dive_sites_logic(const char *filename, const struct dive_site *sites[], int nr_sites, bool anonymize)
+{
+	struct membuffer buf = { 0 };
+	FILE *f;
+	int error = 0;
+
+	save_dive_sites_buffer(&buf, sites, nr_sites, anonymize);
+
+	if (same_string(filename, "-")) {
+		f = stdout;
+	} else {
+		try_to_backup(filename);
+		error = -1;
+		f = subsurface_fopen(filename, "w");
+	}
+	if (f) {
+		flush_buffer(&buf, f);
+		error = fclose(f);
+	}
+	if (error)
+		report_error(translate("gettextFromC", "Failed to save divesites to %s (%s)"), filename, strerror(errno));
+
+	free_buffer(&buf);
+	return error;
 }

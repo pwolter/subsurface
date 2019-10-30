@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef YEARLYSTATISTICSMODEL_H
 #define YEARLYSTATISTICSMODEL_H
 
@@ -14,6 +15,7 @@ public:
 		SHORTEST_TIME,
 		LONGEST_TIME,
 		AVG_DEPTH,
+		AVG_MAX_DEPTH,
 		MIN_DEPTH,
 		MAX_DEPTH,
 		AVG_SAC,
@@ -25,7 +27,7 @@ public:
 		COLUMNS
 	};
 
-	virtual QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
+	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
 	YearlyStatisticsModel(QObject *parent = 0);
 	void update_yearly_stats();
 };

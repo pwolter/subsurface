@@ -1,10 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef DIVELOGEXPORTDIALOG_H
 #define DIVELOGEXPORTDIALOG_H
 
 #include <QDialog>
 #include <QTextStream>
 #include <QFuture>
-#include "core/helpers.h"
 #include "core/statistics.h"
 
 class QAbstractButton;
@@ -33,7 +33,10 @@ private:
 	void showExplanation();
 	void exportHtmlInit(const QString &filename);
 	void export_depths(const char *filename, const bool selected_only);
-	void export_TeX(const char *filename, const bool selected_only);
+	void export_TeX(const char *filename, const bool selected_only, bool plain);
+	void exportProfile(QString filename, const bool selected_only);
+	void saveProfile(const struct dive *dive, const QString filename);
+
 };
 
 #endif // DIVELOGEXPORTDIALOG_H

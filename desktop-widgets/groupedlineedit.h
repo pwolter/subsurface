@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2013 Maximilian Güntner <maximilian.guentner@gmail.com>
  *
@@ -38,7 +39,7 @@ class GroupedLineEdit : public QPlainTextEdit {
 
 public:
 	explicit GroupedLineEdit(QWidget *parent = 0);
-	virtual ~GroupedLineEdit();
+	~GroupedLineEdit();
 
 	QString text() const;
 
@@ -53,17 +54,16 @@ public:
 	QStringList getBlockStringList();
 
 	void addColor(QColor color);
-	void removeAllColors();
 
-	virtual QSize sizeHint() const;
-	virtual QSize minimumSizeHint() const;
+	QSize sizeHint() const override;
+	QSize minimumSizeHint() const override;
 
 signals:
 	void editingFinished();
 
 protected:
-	virtual void paintEvent(QPaintEvent *e);
-	virtual void keyPressEvent(QKeyEvent *e);
+	void paintEvent(QPaintEvent *e) override;
+	void keyPressEvent(QKeyEvent *e) override;
 
 private:
 	struct Private;

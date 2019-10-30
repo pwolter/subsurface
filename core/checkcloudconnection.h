@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef CHECKCLOUDCONNECTION_H
 #define CHECKCLOUDCONNECTION_H
 
 #include <QObject>
 #include <QNetworkReply>
 #include <QSsl>
-
-#include "checkcloudconnection.h"
 
 class CheckCloudConnection : public QObject {
 	Q_OBJECT
@@ -16,7 +15,7 @@ private:
 	QNetworkReply *reply;
 private
 slots:
-	void sslErrors(QList<QSslError> errorList);
+	void sslErrors(const QList<QSslError> &errorList);
 };
 
 #endif // CHECKCLOUDCONNECTION_H

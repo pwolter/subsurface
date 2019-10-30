@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef PREFERENCES_NETWORK_H
 #define PREFERENCES_NETWORK_H
 
@@ -12,17 +13,17 @@ class PreferencesNetwork : public AbstractPreferencesWidget {
 
 public:
 	PreferencesNetwork();
-	virtual ~PreferencesNetwork();
-	virtual void refreshSettings();
-	virtual void syncSettings();
+	~PreferencesNetwork();
+	void refreshSettings() override;
+	void syncSettings() override;
 
 public slots:
 	void proxyType_changed(int i);
-	void cloudPinNeeded();
+	void updateCloudAuthenticationState();
+	void passwordUpdateSuccessful();
 
 private:
 	Ui::PreferencesNetwork *ui;
-	void passwordUpdateSuccessfull();
 };
 
 #endif
